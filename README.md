@@ -6,22 +6,22 @@ The assistant mirrors Alaa's profile and answers in real time via OpenAI Agent B
 
 ## Screenshots
 
-**1. Interview Assistant – Start screen**  
+**1. Interview Assistant – Dashboard**  
 ![Interview Assistant – Start](docs/screenshots/slide-01.png)
 
-**2. Feedback flow – Nachricht an Alaa**  
+**2. Interview Assistant – Workflow**  
 ![Feedback ticket](docs/screenshots/slide-02.png)
 
-**3. Escalation dashboard – Ticket overview**  
+**3. Escalation Dashboard – Eskalation**  
 ![Eskalationen Dashboard](docs/screenshots/slide-03.png)
 
-**4. Ticket details – Status & Kommentar**  
+**4. Escalation Dashboard – Eskalation 2**  
 ![Ticket Detailansicht](docs/screenshots/slide-04.png)
 
-**5. Terminvereinbarung – HR example**  
+**5. Terminvereinbarung**  
 ![Terminvereinbarung Beispiel](docs/screenshots/slide-05.png)
 
-**6. Practical examples – KI-Automatisierung**  
+**6. Practical examples – out of scope**  
 ![Praxisbeispiele](docs/screenshots/slide-06.png)
 
 ## Live Demo
