@@ -26,8 +26,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text, create_engine, select
-from sqlalchemy.orm import Session, declarative_base, sessionmaker
+from sqlalchemy import Boolean, DateTime, Integer, String, Text, create_engine, select
+from sqlalchemy.orm import Mapped, Session, declarative_base, mapped_column, sessionmaker
 from dotenv import load_dotenv
 import openai
 import httpx
@@ -92,19 +92,19 @@ class EscalationStatus(str, Enum):
 class EscalationTicket(Base):
     __tablename__ = "escalations"
 
-    id = Column(Integer, primary_key=True, index=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    title = Column(String(255), nullable=False)
-    category = Column(String(128), nullable=False)
-    message = Column(Text, nullable=False)
-    language = Column(String(16), nullable=False)
-    name = Column(String(128), nullable=True)
-    email = Column(String(192), nullable=True)
-    allow_contact = Column(Boolean, nullable=False, default=False)
-    conversation_id = Column(String(128), nullable=True)
-    source = Column(String(64), nullable=False, default="interview_assistant")
-    version = Column(Integer, nullable=False, default=1)
-    status = Column(String(32), nullable=False, default=EscalationStatus.offen.value)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    category: Mapped[str] = mapped_column(String(128), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    language: Mapped[str] = mapped_column(String(16), nullable=False)
+    name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    email: Mapped[Optional[str]] = mapped_column(String(192), nullable=True)
+    allow_contact: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    conversation_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    source: Mapped[str] = mapped_column(String(64), nullable=False, default="interview_assistant")
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default=EscalationStatus.offen.value)
 
 
 class EscalationCreate(BaseModel):
@@ -340,7 +340,7 @@ async def update_escalation_status(
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
 
-    ticket.status = str(payload.status.value)
+    ticket.status = payload.status.value
     db.add(ticket)
     db.commit()
     db.refresh(ticket)
