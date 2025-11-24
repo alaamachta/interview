@@ -164,7 +164,7 @@ def sanitize_text(value: Optional[str]) -> Optional[str]:
 def admin_required(x_admin_token: Optional[str] = Header(None)) -> str:
     if not ADMIN_TOKEN:
         raise HTTPException(status_code=503, detail="Admin token not configured")
-    if x_admin_token != ADMIN_TOKEN:
+    if x_admin_token is None or x_admin_token != ADMIN_TOKEN:
         raise HTTPException(status_code=401, detail="Unauthorized")
     return x_admin_token
 
@@ -340,7 +340,7 @@ async def update_escalation_status(
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
 
-    ticket.status = payload.status.value
+    ticket.status = str(payload.status.value)
     db.add(ticket)
     db.commit()
     db.refresh(ticket)
