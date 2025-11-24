@@ -4,6 +4,30 @@ AI-powered interview companion for **Alaa Mashta**. This repo contains the FastA
 
 The assistant mirrors Alaa's profile and answers in real time via OpenAI Agent Builder + ChatKit. Escalations are stored locally so Alaa can follow up with real people from the dashboard.
 
+## Screenshots
+
+**1. Interview Assistant – Start screen**  
+![Interview Assistant – Start](docs/screenshots/slide-01.png)
+
+**2. Feedback flow – Nachricht an Alaa**  
+![Feedback ticket](docs/screenshots/slide-02.png)
+
+**3. Escalation dashboard – Ticket overview**  
+![Eskalationen Dashboard](docs/screenshots/slide-03.png)
+
+**4. Ticket details – Status & Kommentar**  
+![Ticket Detailansicht](docs/screenshots/slide-04.png)
+
+**5. Terminvereinbarung – HR example**  
+![Terminvereinbarung Beispiel](docs/screenshots/slide-05.png)
+
+**6. Practical examples – KI-Automatisierung**  
+![Praxisbeispiele](docs/screenshots/slide-06.png)
+
+## Live Demo
+
+You can try the Interview Assistant here: https://www.landki.com/interview/
+
 ## Repository structure
 
 - `server.py` – FastAPI service for health checks, ChatKit session bootstrap, escalation CRUD, and admin utilities (`/interview/api/...`).
@@ -50,6 +74,7 @@ npm run dev
 - Vite serves `http://localhost:5173/interview/` by default (`vite.config.js` sets `base: '/interview/'`).
 - The ChatKit widget fetches client secrets from `VITE_CHATKIT_API_URL` (defaults to the backend's `/interview/api/chatkit` route when the env var is unset).
 - Escalation actions post directly to `/interview/api/escalations` (see `src/chatkit/escalationPayload.ts`). Ensure your dev server proxies to the running FastAPI instance or run both on the same host.
+- Both entry templates (`frontend/index.html` and `frontend/dashboard.html`) include a single `<link rel="icon" href="/interview/favicon.png?v=2">`, so the deployed pages share `/interview/favicon.png` (now cache-busted with `?v=2`) from this repo’s root.
 - `npm run lint` runs ESLint across the frontend; `frontend/vite.config.js` now derives `__dirname` via `fileURLToPath`/`dirname` (node:url + node:path) so the config file is treated as a Node script and no longer trips `no-undef`.
 
 ### Frontend ↔ Backend contract
