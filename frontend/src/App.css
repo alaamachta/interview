@@ -1,151 +1,134 @@
-/* /var/www/landki/interview/frontend/src/App.css */
+:root {
+  color-scheme: dark;
+}
 
-/* Global Dark + animated LandKI-Gradient */
-:root { color-scheme: dark; }
-html, body {
+html,
+body,
+#root {
   margin: 0;
   padding: 0;
   height: 100%;
   width: 100%;
   overflow: hidden;
-  background:
-    radial-gradient(1200px 800px at 10% 10%, rgba(118,75,162,0.25), transparent),
-    radial-gradient(1200px 800px at 90% 20%, rgba(102,126,234,0.20), transparent),
-    linear-gradient(160deg,#0b132b,#1c2541 55%,#0b132b);
+  background: radial-gradient(
+      1200px 800px at 10% 10%,
+      rgba(118, 75, 162, 0.25),
+      transparent
+    ),
+    radial-gradient(
+      1200px 800px at 90% 20%,
+      rgba(102, 126, 234, 0.2),
+      transparent
+    ),
+    linear-gradient(160deg, #0b132b, #1c2541 55%, #0b132b);
   background-attachment: fixed;
   color: #e2e8f0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen,
-               Ubuntu, Cantarell, "Fira Sans", "Droid Sans", "Helvetica Neue", Arial, sans-serif;
+    Ubuntu, Cantarell, "Fira Sans", "Droid Sans", "Helvetica Neue", Arial,
+    sans-serif;
   animation: bgFloat 22s ease-in-out infinite alternate;
 }
 
-#root {
-  height: 100%;
-  width: 100%;
-}
-
 @keyframes bgFloat {
-  from { background-position: 0 0, 0 0, 0 0; }
-  to   { background-position: 6% -4%, -6% 5%, 0 0; }
+  from {
+    background-position: 0 0, 0 0, 0 0;
+  }
+  to {
+    background-position: 6% -4%, -6% 5%, 0 0;
+  }
 }
 
-/* Layout - Full Screen */
-.app-container {
+.app-root {
   width: 100%;
-  height: 100%;
+  min-height: 100vh;
   display: flex;
   flex-direction: column;
-  padding: 0;
-  margin: 0;
+  padding: clamp(16px, 1vw, 32px);
+  box-sizing: border-box;
 }
 
-.app-header {
-  text-align: center;
-  padding: 20px 20px 10px;
-  background: rgba(0,0,0,0.2);
-  backdrop-filter: blur(10px);
-  border-bottom: 1px solid rgba(255,255,255,0.1);
-  flex-shrink: 0;
+.app-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  width: 100%;
+  max-width: 100%;
+  margin: 0 auto;
+  gap: clamp(12px, 2vh, 20px);
 }
-.app-header h1 {
-  margin: 0 0 5px 0;
-  font-size: 1.8rem;
-  background: linear-gradient(135deg,#f8fafc 0%,#94a3b8 55%,#f8fafc 100%);
-  background-clip: text;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  letter-spacing: .5px;
+
+.chat-shell {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  width: 100%;
 }
-.app-header p {
-  margin: 0;
-  color: #94a3b8;
+
+.app-loading,
+.app-error {
+  padding: 10px 14px;
+  border-radius: 12px;
+  backdrop-filter: blur(6px);
+}
+
+.app-loading {
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  font-size: 1rem;
+}
+
+.app-error {
+  background: rgba(220, 38, 38, 0.1);
+  border: 1px solid rgba(220, 38, 38, 0.45);
+  color: #fca5a5;
   font-size: 0.9rem;
 }
 
-/* Chat container - Full Screen */
-.chat-wrapper {
-  flex: 1;
-  position: relative;
-  overflow: hidden;
-  
-  /* Minimal styling, ChatKit fills the space */
-  backdrop-filter: blur(18px);
-  background: rgba(8, 10, 18, 0.3);
-  border-top: 1px solid rgba(255,255,255,0.05);
-}
-.chat-wrapper > * {
-  height: 100%;
-  width: 100%;
+.app-error pre {
+  margin: 6px 0 0;
+  font-size: 0.75rem;
+  color: #fef2f2;
+  white-space: pre-wrap;
 }
 
-/* Init overlay (dark, nicht weiß) */
-.loading-overlay {
-  position: absolute;
-  inset: 0;
+.chat-container {
+  flex: 1;
+  min-height: 0;
+  border-radius: 18px;
+  overflow: hidden;
+  background: rgba(8, 10, 18, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 30px 80px rgba(3, 7, 18, 0.5);
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  background: rgba(10,12,18,0.75);
-  color: #e8eaf6;
-  font-size: 1rem;
-  border-radius: 18px;
-  backdrop-filter: blur(2px);
-}
-.loading-hint {
-  margin-top: 8px;
-  font-size: .85rem;
-  color: #c7cbe6;
+  padding: 0;
 }
 
-/* Error */
-.error-message {
-  background: rgba(220,38,38,.10);
-  border: 1px solid rgba(220,38,38,.45);
-  color: #fca5a5;
-  padding: 14px 18px;
-  margin-bottom: 24px;
-  border-radius: 12px;
-  font-size: .92rem;
-  backdrop-filter: blur(4px);
+.chat-container > * {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
-/* Feedback button */
-.feedback-wrap {
-  position: absolute;
-  bottom: 14px;
-  right: 14px;
-  display: flex;
-  gap: 10px;
-  align-items: center;
-}
-.feedback-btn {
-  background: linear-gradient(135deg,#ef4444,#dc2626);
-  border: none;
-  color: #fff;
-  padding: 12px 18px;
-  font-size: .85rem;
-  font-weight: 600;
-  letter-spacing: .5px;
-  border-radius: 14px;
-  cursor: pointer;
-  box-shadow: 0 6px 20px -5px rgba(0,0,0,.5);
-  transition: transform .25s ease, box-shadow .25s ease;
+.chatkit-element {
+  width: 100%;
+  height: 100%;
+  display: block;
+  flex: 1 1 auto;
 }
 
-/* Fade helpers */
-.opacity-0   { opacity: 0;   pointer-events: none; }
-.opacity-100 { opacity: 1;   transition: opacity .3s ease; }
-
-/* 🌙 ChatKit Dark Theme Override (iframe + shadow-DOM) */
 openai-chatkit,
 openai-chatkit *,
+.chatkit-element,
+.chatkit-element *,
 .ck-iframe,
 #chatkit-container {
   color-scheme: dark !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  display: block;
 }
 
-/* Inject dark variables for ChatKit */
 :root {
   --ck-color-background: #0b1120;
   --ck-color-surface: #0f172a;
@@ -157,14 +140,14 @@ openai-chatkit *,
   --ck-color-primary-hover: #5568d3;
 }
 
-/* Force dark on iframe content if accessible */
 openai-chatkit iframe,
 .ck-iframe {
   background: #0f172a !important;
   color-scheme: dark !important;
+  height: 100% !important;
+  min-height: 0 !important;
 }
 
-/* Attempt to override ChatKit internal styles via attribute selectors */
 openai-chatkit[theme="dark"],
 openai-chatkit[data-theme="dark"],
 openai-chatkit[data-color-scheme="dark"] {
@@ -172,10 +155,10 @@ openai-chatkit[data-color-scheme="dark"] {
   color: #e2e8f0 !important;
 }
 
-/* Target any nested elements that might have white backgrounds */
 openai-chatkit * {
   background-color: transparent !important;
 }
+
 openai-chatkit div[class*="container"],
 openai-chatkit div[class*="wrapper"],
 openai-chatkit div[class*="panel"] {
@@ -183,9 +166,16 @@ openai-chatkit div[class*="panel"] {
   color: #e2e8f0 !important;
 }
 
-/* Responsive */
 @media (max-width: 900px) {
-  .app-container { padding: 18px 18px 32px; }
-  .chat-wrapper  { min-height: 560px; height: 70vh; }
-  .app-header h1 { font-size: 1.9rem; }
+  .app-root {
+    padding: 0px;
+  }
+  .app-main {
+    padding: 0px;
+  }
+  .chat-shell {
+    width: 100%;
+    height: calc(100vh - 60px);
+    min-height: 0;
+  }
 }

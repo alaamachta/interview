@@ -1,141 +1,80 @@
-# Interview Assistent (ChatKit) – Deployment & Betrieb
-Produktiver Interview-Chat auf https://landki.com/interview/ basierend auf:
-- Backend: Python FastAPI (`server.py`)
-- UI: React + Vite + `@openai/chatkit-react`
-- OpenAI: ChatKit Sessions API + Workflow (RAG)
-- Dashboard: statische Admin-Seite zum Anzeigen von Logs/Feedback
+# Interview Assistant – LandKI Demo
 
+AI-powered interview companion for **Alaa Mashta**. This repo contains the FastAPI backend, Vite/React widget, dashboard, and knowledge base that power the public demo embedded at `https://landki.com/interview/` (and `/interview/dashboard/`).
 
+The assistant mirrors Alaa's profile and answers in real time via OpenAI Agent Builder + ChatKit. Escalations are stored locally so Alaa can follow up with real people from the dashboard.
 
-## Verzeichnisstruktur
-```
-/var/www/landki/interview/
-├── server.py                 # FastAPI API: Health, Session, Logs, Feedback
-├── requirements.txt          # Python Abhängigkeiten
-├── .env                      # Server-Umgebungsvariablen (API Key, Domain Key, Workflow ID, ...)
-├── frontend/                 # React + Vite App (Chat UI)
-│   ├── index.html
-│   ├── package.json
-│   └── src/
-│       ├── App.jsx           # ChatKit-Einbindung
-│       └── App.css           # Dark UI, Gradient, Layout
-├── dashboard/
-│   └── index.html            # Admin-Dashboard (Stats, Logs, Public Feedback)
-├── _logs/                    # JSONL-Logs (chat.jsonl, feedback.jsonl)
-├── _backups/                 # Backups & Snapshots
+## Repository structure
 
-```
+- `server.py` – FastAPI service for health checks, ChatKit session bootstrap, escalation CRUD, and admin utilities (`/interview/api/...`).
+- `frontend/` – Vite + React codebase for the embedded widget (`src/App.jsx`) and the admin dashboard (`src/dashboard/`).
+- `_logs/` – Runtime JSONL logs (chat + feedback) born at runtime and ignored by Git.
+- `_backups/` – Historical snapshots of frontend/backend files kept instead of deleting older iterations.
+- `Knowledge Base v5.1. – Interview Assistant.md` – Canonical design + persona document used by the OpenAI workflow.
+- [`REPO_STRUCTURE.md`](REPO_STRUCTURE.md) – Expanded tree of every directory and key file for quick onboarding (**see this file for the full breakdown**).
 
-## Voraussetzungen
-- Python 3.10+
-- Node 20+ (für Frontend Build)
-- OpenAI Account mit Workflow/Vector Store
-- NGINX Reverse Proxy mit Präfix `/interview/`
+## Getting started (local dev)
 
-## Environment (.env im Ordner `interview/`)
-```
-OPENAI_API_KEY=sk-proj-...
-DOMAIN_PUBLIC_KEY=domain_pk_...
-OPENAI_WORKFLOW_ID=wf_...
-ALLOWED_ORIGINS=https://landki.com,http://localhost:5173
-PORT=3001
-# Optional:
-# ADMIN_TOKEN=geheim
-```
+### Prerequisites
 
-Wichtig:
-- Der Domain Public Key wird als Header `OpenAI-Domain-Public-Key` zur Sessions API geschickt (Domain Allowlist).
+- Python **3.10+** (FastAPI + SQLAlchemy code uses modern typing).
+- Node.js **20+** (Vite 7 and React 19 requirements) with npm 10.
+- OpenAI Agent Builder workflow + API keys (never committed; supply them via `.env`).
 
-## Installation & Start
-Backend-Pakete installieren und Server starten:
+### Backend quick start
 
 ```bash
-cd /var/www/landki/interview
-pip3 install -r requirements.txt
-python3 server.py &
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\\Scripts\\activate
+pip install -r requirements.txt
+cp .env.example .env
+# fill in OPENAI_* keys, CHATKIT ids, ADMIN_TOKEN, ALLOWED_ORIGINS, etc.
+uvicorn server:app --reload --host 0.0.0.0 --port 3001
 ```
 
-Frontend bauen:
+Key details:
+
+- `server.py` loads env vars via `python-dotenv` and exposes all endpoints under `/interview/api/...`.
+- `ADMIN_TOKEN` gates admin endpoints (logs, ticket list, status changes). Without it, admin routes return 503/401.
+- `OPENAI_API_KEY`, `OPENAI_PROJECT_ID`, `OPENAI_WORKFLOW_ID`, and `OPENAI_DOMAIN_PUBLIC_KEY` are required for ChatKit session bootstrap.
+- `escalations.db` (SQLite) and `_logs/` are created automatically; both stay local and are gitignored.
+
+### Frontend quick start
 
 ```bash
-cd /var/www/landki/interview/frontend
-npm ci || npm install
-npm run build
+cd frontend
+npm install
+npm run dev
 ```
 
-Health-Check:
+- Vite serves `http://localhost:5173/interview/` by default (`vite.config.js` sets `base: '/interview/'`).
+- The ChatKit widget fetches client secrets from `VITE_CHATKIT_API_URL` (defaults to the backend's `/interview/api/chatkit` route when the env var is unset).
+- Escalation actions post directly to `/interview/api/escalations` (see `src/chatkit/escalationPayload.ts`). Ensure your dev server proxies to the running FastAPI instance or run both on the same host.
 
-```bash
-curl -sS http://127.0.0.1:3001/interview/api/health
-```
+### Frontend ↔ Backend contract
 
-## Wichtige Endpunkte
-- GET `/interview/api/health` – Health Check
-- POST `/interview/api/chatkit/session` – Erstellt ChatKit Session (gibt `client_secret` an den Client)
-- POST `/interview/api/log` – Generische Client-Logs (JSONL `chat.jsonl`)
-- POST `/interview/api/feedback` – Öffentliches Feedback (JSONL `feedback.jsonl`)
-- GET `/interview/api/feedback/list` – Liste der öffentlichen Feedbacks
-- GET `/interview/api/admin/logs?log_type=chat|feedback&limit=100` – Letzte Log-Einträge (optional geschützt via `X-Admin-Token`)
-- GET `/interview/api/admin/stats` – Einfache Zähler (optional geschützt)
+- ChatKit session bootstrap: `POST /interview/api/chatkit/session` returns a client secret, domain public key, and metadata consumed by `chatKitOptions`.
+- Escalations: widget/tool calls send sanitized payloads to `POST /interview/api/escalations`, which persists them via SQLAlchemy and responds with the ticket record.
+- Dashboard API: React dashboard fetches `GET /interview/api/escalations` and uses `PATCH /interview/api/escalations/{id}/status` to mark tickets as `offen` or `erledigt` (requires the `x-admin-token` header matching `ADMIN_TOKEN`).
 
-Dashboard: https://landki.com/interview/dashboard
+## Escalations & Dashboard
 
-## NGINX (Beispiel)
-```nginx
-location /interview/ {
-    # Statische Dateien der Frontend-App werden separat ausgeliefert
-    # (Deployment je nach Setup; bei Vite-Build aus dist/ einspielen)
-    try_files $uri $uri/ /interview/index.html;
-}
+- FastAPI models (see `server.py`, lines ~90–180) define the `EscalationTicket` schema backed by `escalations.db`.
+- Widget & ChatKit client tools leverage `frontend/src/chatkit/escalationPayload.ts` to sanitize inputs before hitting the backend.
+- The dashboard UI under `frontend/src/dashboard/AdminDashboardApp.jsx` surfaces open tickets, allows filtering, and calls the admin endpoints with the configured token.
+- `_logs/` is tailed via `/interview/api/admin/logs` for auditability; `/interview/api/admin/stats` exposes basic counters for the dashboard to plot.
 
-location /interview/api/ {
-    proxy_pass http://127.0.0.1:3001/interview/api/;
-    proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-}
-```
+## Production / Deployment overview
 
-## Theme Hinweis
-- ChatKit läuft im eigenen iframe/shadow DOM. API-seitige Theme-Parameter sind derzeit eingeschränkt.
+- The Hetzner VM runs this repo behind Nginx; FastAPI serves at `/interview/api/*` and also mounts `frontend/dist` for `/interview/` and `/interview/dashboard/`.
+- Deployments build the frontend (`npm run build`) so Vite outputs land in `frontend/dist/` (served statically by FastAPI/Nginx) while the backend continues running via systemd or a process manager.
+- Secrets (`.env`, database contents, logs) stay on the server only. The public GitHub repo contains code, templates, and documentation—never real API keys, client secrets, or production databases.
+- Escalations and dashboard actions operate on the local SQLite database; swap it for Postgres/MySQL if multi-instance scaling is required.
 
+## Live demo
 
-## Troubleshooting
-- 401 „Domain verification failed“: `DOMAIN_PUBLIC_KEY` prüfen (muss in `.env` stehen); Server neu starten.
-- 404 auf `/interview/api/...`: NGINX-Präfix/Proxy prüfen.
-- Port 3001 belegt: `lsof -i:3001` → Prozess beenden.
-- `Unknown parameter: chatkit_configuration.theme`: Theme-Objekt aus Payload entfernen (bereits gefixt).
-- `ERR_BLOCKED_BY_CLIENT`: Browser/AdBlock blockiert Analytics – kann ignoriert werden.
+The production instance is embedded at **https://landki.com/interview/** with the admin dashboard mirrored at `https://landki.com/interview/dashboard/`. This repository is the canonical source for that demo build.
 
-## Betrieb & Pflege
+## License / Usage
 
-- Logs: `_logs/chat.jsonl`, `_logs/feedback.jsonl` (JSONL, zeilenbasiert)
-- Rotation (einfach): Datei kopieren und truncaten
-    ```bash
-    cp _logs/chat.jsonl _backups/chat-$(date +%Y%m%d).jsonl && truncate -s0 _logs/chat.jsonl
-    ```
-- Upgrades: `@openai/chatkit-react` Changelog prüfen; Frontend neu bauen; Server-API stabil halten.
-
-## Quick Commands
-```bash
-# Server starten
-cd /var/www/landki/interview && python3 server.py &
-
-# Health
-curl -sS http://127.0.0.1:3001/interview/api/health
-
-# Session testen
-curl -sS -X POST http://127.0.0.1:3001/interview/api/chatkit/session \
-    -H 'Content-Type: application/json' -d '{}'
-
-# Feedback senden
-curl -sS -X POST http://127.0.0.1:3001/interview/api/feedback \
-    -H 'Content-Type: application/json' \
-    -d '{"session_id":"demo","user_question":"Q?","assistant_reply":"A","category":"out_of_scope"}'
-
-# Feedback-Liste
-curl -sS http://127.0.0.1:3001/interview/api/feedback/list
-```
-
----
-
-Version: 1.2.0 · Letztes Update: 2025-11-12
+This is proprietary demo code authored by **Alaa Mashta**. It is published for transparency, learning, and portfolio review only and is **not** licensed for commercial reuse without written permission.

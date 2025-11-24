@@ -15,14 +15,19 @@ Notes:
 """
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
+from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import Generator, List, Optional
 import logging
 
-from fastapi import FastAPI, HTTPException, Header, Request
+from fastapi import Depends, FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text, create_engine, select
+from sqlalchemy.orm import Session, declarative_base, sessionmaker
 from dotenv import load_dotenv
 import openai
 
@@ -58,8 +63,108 @@ BASE_DIR = Path(__file__).parent
 LOGS_DIR = BASE_DIR / "_logs"
 LOGS_DIR.mkdir(exist_ok=True)
 
+ADMIN_HEADER = "x-admin-token"
+DATABASE_FILE = BASE_DIR / "escalations.db"
+FRONTEND_DIST = BASE_DIR / "frontend" / "dist"
+ASSETS_DIR = FRONTEND_DIST / "assets"
+DASHBOARD_HTML = FRONTEND_DIST / "dashboard.html"
+
 # App
 app = FastAPI(title="Interview API", version="1.2.0")
+
+if ASSETS_DIR.exists():
+    app.mount("/interview/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
+engine = create_engine(
+    f"sqlite:///{DATABASE_FILE}",
+    connect_args={"check_same_thread": False},
+)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+
+class EscalationStatus(str, Enum):
+    offen = "offen"
+    erledigt = "erledigt"
+
+
+class EscalationTicket(Base):
+    __tablename__ = "escalations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    title = Column(String(255), nullable=False)
+    category = Column(String(128), nullable=False)
+    message = Column(Text, nullable=False)
+    language = Column(String(16), nullable=False)
+    name = Column(String(128), nullable=True)
+    email = Column(String(192), nullable=True)
+    allow_contact = Column(Boolean, nullable=False, default=False)
+    conversation_id = Column(String(128), nullable=True)
+    source = Column(String(64), nullable=False, default="interview_assistant")
+    version = Column(Integer, nullable=False, default=1)
+    status = Column(String(32), nullable=False, default=EscalationStatus.offen.value)
+
+
+class EscalationCreate(BaseModel):
+    title: str
+    category: str
+    message: str
+    language: str = Field(default="de")
+    source: str = Field(default="interview_assistant")
+    version: int = Field(default=1)
+    name: Optional[str] = None
+    email: Optional[str] = None
+    allow_contact: bool = False
+    conversation_id: Optional[str] = None
+
+
+class EscalationResponse(BaseModel):
+    id: int
+    created_at: datetime
+    title: str
+    category: str
+    message: str
+    language: str
+    name: Optional[str] = None
+    email: Optional[str] = None
+    allow_contact: bool
+    conversation_id: Optional[str] = None
+    source: str
+    version: int
+    status: EscalationStatus
+
+    class Config:
+        orm_mode = True
+
+
+class EscalationStatusUpdate(BaseModel):
+    status: EscalationStatus
+
+
+Base.metadata.create_all(engine)
+
+
+def get_db() -> Generator[Session, None, None]:
+    session = SessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
+
+
+def sanitize_text(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    trimmed = value.strip()
+    return trimmed or None
+
+
+def admin_required(x_admin_token: Optional[str] = Header(None)) -> str:
+    if not ADMIN_TOKEN:
+        raise HTTPException(status_code=503, detail="Admin token not configured")
+    if x_admin_token != ADMIN_TOKEN:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return x_admin_token
 
 # CORS
 if ALLOWED_ORIGINS:
@@ -143,6 +248,102 @@ async def get_stats(x_admin_token: Optional[str] = Header(None)):
                         stats["today_feedback"] += 1
 
     return stats
+
+
+@app.get("/interview/api/admin/ping")
+async def admin_ping(_: str = Depends(admin_required)):
+    """Simple admin probe to validate the provided token."""
+    return {"ok": True}
+
+
+@app.get("/interview/dashboard/", include_in_schema=False)
+async def serve_dashboard():
+    if not DASHBOARD_HTML.exists():
+        raise HTTPException(status_code=404, detail="Dashboard build not found")
+    return FileResponse(DASHBOARD_HTML, media_type="text/html")
+
+
+@app.post("/interview/api/escalations")
+async def create_escalation(payload: EscalationCreate, db: Session = Depends(get_db)):
+    """Receive escalation tickets from ChatKit message actions."""
+    logger.info(
+        "Escalation payload received: %s",
+        payload.dict(exclude_none=True),
+    )
+    ticket = EscalationTicket(
+        title=sanitize_text(payload.title) or payload.title,
+        category=sanitize_text(payload.category) or payload.category,
+        message=sanitize_text(payload.message) or payload.message,
+        language=sanitize_text(payload.language) or payload.language,
+        name=sanitize_text(payload.name),
+        email=sanitize_text(payload.email),
+        allow_contact=bool(payload.allow_contact),
+        conversation_id=sanitize_text(payload.conversation_id),
+        source=sanitize_text(payload.source) or "interview_assistant",
+        version=payload.version or 1,
+        status=EscalationStatus.offen.value,
+    )
+
+    try:
+        db.add(ticket)
+        db.commit()
+        db.refresh(ticket)
+        logger.info(f"Escalation ticket stored: id={ticket.id} category={ticket.category}")
+    except Exception as process_error:
+        logger.exception("Failed to store escalation ticket")
+        raise HTTPException(status_code=500, detail="Failed to store escalation ticket") from process_error
+
+    return {"ok": True, "ticket_id": ticket.id}
+
+
+@app.get("/interview/api/escalations", response_model=List[EscalationResponse])
+async def list_escalations(
+    period: str = "7d",
+    category: Optional[str] = None,
+    db: Session = Depends(get_db),
+    _: str = Depends(admin_required),
+):
+    """List escalation tickets for admins."""
+    periods = {
+        "24h": timedelta(hours=24),
+        "7d": timedelta(days=7),
+        "all": None,
+    }
+
+    normalized_period = (period or "7d").lower()
+    if normalized_period not in periods:
+        raise HTTPException(status_code=400, detail="Invalid period")
+
+    query = select(EscalationTicket)
+    threshold = periods[normalized_period]
+    if threshold:
+        query = query.where(EscalationTicket.created_at >= datetime.utcnow() - threshold)
+
+    if category:
+        query = query.where(EscalationTicket.category == category)
+
+    query = query.order_by(EscalationTicket.created_at.desc())
+    results = db.execute(query).scalars().all()
+    return results
+
+
+@app.patch("/interview/api/escalations/{ticket_id}/status", response_model=EscalationResponse)
+async def update_escalation_status(
+    ticket_id: int,
+    payload: EscalationStatusUpdate,
+    db: Session = Depends(get_db),
+    _: str = Depends(admin_required),
+):
+    ticket = db.get(EscalationTicket, ticket_id)
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+
+    ticket.status = payload.status.value
+    db.add(ticket)
+    db.commit()
+    db.refresh(ticket)
+
+    return ticket
 
 @app.post("/interview/api/admin/feedback")
 async def submit_feedback(request: Request, x_admin_token: Optional[str] = Header(None)):
