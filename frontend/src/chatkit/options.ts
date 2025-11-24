@@ -8,28 +8,44 @@ import {
 
 const apiBase =
   import.meta.env.VITE_CHATKIT_API_URL ?? "/interview/api/chatkit";
+const sessionEndpoint = `${apiBase}/session`;
+
+async function fetchClientSecret(currentClientSecret: string | null) {
+  const response = await fetch(sessionEndpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      current_client_secret: currentClientSecret,
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "(no body)");
+    console.error(
+      "[ChatKit] Failed to obtain client_secret",
+      response.status,
+      body
+    );
+    throw new Error(
+      "Failed to obtain client_secret from /interview/api/chatkit/session"
+    );
+  }
+
+  const payload = await response.json();
+  if (!payload?.client_secret) {
+    console.error(
+      "[ChatKit] Session endpoint response missing client_secret",
+      payload
+    );
+    throw new Error("Invalid response from ChatKit session endpoint");
+  }
+  return payload.client_secret as string;
+}
 
 export const chatKitOptions: ChatKitOptions = {
   api: {
     async getClientSecret(currentClientSecret) {
-      if (currentClientSecret) return currentClientSecret;
-
-      const response = await fetch(`${apiBase}/session`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      });
-
-      if (!response.ok) {
-        console.error(
-          "[ChatKit] Failed to fetch client_secret:",
-          response.status,
-          await response.text()
-        );
-        throw new Error("CHATKIT_CLIENT_SECRET_FETCH_FAILED");
-      }
-
-      const body = await response.json();
-      return body.client_secret as string;
+      return fetchClientSecret(currentClientSecret ?? null);
     },
   },
 

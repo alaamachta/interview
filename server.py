@@ -30,6 +30,7 @@ from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text, create_
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 from dotenv import load_dotenv
 import openai
+import httpx
 
 # Load environment variables
 load_dotenv()
@@ -49,6 +50,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_WORKFLOW_ID = os.getenv("OPENAI_WORKFLOW_ID") or os.getenv("OPENAI_WORKFLOW_ID") or os.getenv("OPENAI_WORKFLOW_ID")
 OPENAI_PROJECT_ID = os.getenv("OPENAI_PROJECT_ID")
 DOMAIN_PUBLIC_KEY = os.getenv("OPENAI_DOMAIN_PUBLIC_KEY") or os.getenv("DOMAIN_PUBLIC_KEY")
+CHATKIT_SESSION_TTL_SECONDS = int(os.getenv("CHATKIT_SESSION_TTL_SECONDS", "3600"))
 
 # Initialize OpenAI client
 if OPENAI_API_KEY:
@@ -390,7 +392,7 @@ async def submit_feedback(request: Request, x_admin_token: Optional[str] = Heade
     return {"ok": True}
 
 @app.post("/interview/api/chatkit/session")
-async def chatkit_session():
+async def chatkit_session(request: Request):
     """Create a ChatKit session using the official ChatKit API.
     
     This endpoint follows the pattern from openai-chatkit-starter-app.
@@ -405,6 +407,12 @@ async def chatkit_session():
         raise HTTPException(status_code=400, detail="Missing workflow id")
     
     try:
+        try:
+            body = await request.json()
+            current_secret = body.get("current_client_secret") or body.get("currentClientSecret")
+        except Exception:
+            current_secret = None
+
         # Call OpenAI ChatKit Sessions API
         chatkit_api_base = "https://api.openai.com"
         url = f"{chatkit_api_base}/v1/chatkit/sessions"
@@ -423,9 +431,14 @@ async def chatkit_session():
         import uuid
         user_id = str(uuid.uuid4())
         
+        ttl_seconds = max(300, CHATKIT_SESSION_TTL_SECONDS)
         payload = {
             "workflow": {"id": workflow_id},  # Use latest/default version
             "user": user_id,
+            "expires_after": {
+                "anchor": "created_at",
+                "seconds": ttl_seconds,
+            },
             "chatkit_configuration": {
                 "file_upload": {
                     "enabled": False
@@ -433,23 +446,63 @@ async def chatkit_session():
             }
         }
         
-        logger.info(f"Creating ChatKit session for workflow: {workflow_id}")
+        logger.info(
+            "[ChatKit] Creating session: %s",
+            json.dumps(
+                {
+                    "event": "chatkit_session_create_start",
+                    "workflow_id": workflow_id,
+                    "endpoint": "/interview/api/chatkit/session",
+                    "ttl_seconds": ttl_seconds,
+                },
+                ensure_ascii=False,
+            ),
+        )
         
-        import httpx
         async with httpx.AsyncClient(timeout=30.0) as http_client:
             response = await http_client.post(url, headers=headers, json=payload)
             
             if response.status_code != 200:
-                logger.error(f"ChatKit session creation failed: {response.status_code} - {response.text}")
+                logger.error(
+                    "[ChatKit] Session creation failed: %s",
+                    json.dumps(
+                        {
+                            "event": "chatkit_session_create_failed",
+                            "workflow_id": workflow_id,
+                            "endpoint": "/interview/api/chatkit/session",
+                            "status_code": response.status_code,
+                            "response_text": response.text,
+                            "has_current_secret": bool(current_secret),
+                        },
+                        ensure_ascii=False,
+                    ),
+                )
                 raise HTTPException(
-                    status_code=response.status_code,
-                    detail=f"ChatKit API error: {response.text}"
+                    status_code=502,
+                    detail="Failed to create ChatKit session",
                 )
             
             session_data = response.json()
-            logger.info(f"ChatKit session created successfully")
+            logger.info(
+                "[ChatKit] Session created: %s",
+                json.dumps(
+                    {
+                        "event": "chatkit_session_create_success",
+                        "workflow_id": workflow_id,
+                        "endpoint": "/interview/api/chatkit/session",
+                        "status_code": response.status_code,
+                        "session_id": session_data.get("id"),
+                        "ttl_seconds": ttl_seconds,
+                    },
+                    ensure_ascii=False,
+                ),
+            )
             
-            return session_data
+            return {
+                "client_secret": session_data.get("client_secret"),
+                "expires_at": session_data.get("expires_at"),
+                "session_id": session_data.get("id"),
+            }
             
     except httpx.HTTPError as e:
         error_msg = f"HTTP error creating ChatKit session: {str(e)}"

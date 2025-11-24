@@ -16,10 +16,20 @@ const ERROR_ASSISTANT_MESSAGE =
   "❌ Die Nachricht konnte leider nicht gesendet werden.\n" +
   "Bitte versuchen Sie es später erneut.";
 
-function useHostedChatKit(baseOptions) {
+const SESSION_INACTIVE_MESSAGE =
+  "Ihre Sitzung war zu lange inaktiv und wurde beendet.";
+const SESSION_RESTART_PROMPT = "Bitte starten Sie den Chat neu.";
+const SESSION_RESTART_BUTTON = "Chat neu starten";
+
+function useHostedChatKit(baseOptions, resetNonce = 0) {
   const [status, setStatus] = React.useState("initializing");
   const [error, setError] = React.useState(null);
   const [clientToolHandler, setClientToolHandler] = React.useState();
+  const baseOptionsWithNonce = React.useMemo(() => {
+    // Touch resetNonce to ensure useMemo reruns when we remount ChatKit.
+    void resetNonce;
+    return { ...baseOptions };
+  }, [baseOptions, resetNonce]);
 
   const onClientTool = React.useCallback(
     (handler) => {
@@ -33,8 +43,8 @@ function useHostedChatKit(baseOptions) {
     const handleReady = (detail) => {
       setStatus("ready");
       setError(null);
-      if (typeof baseOptions.onReady === "function") {
-        baseOptions.onReady(detail);
+      if (typeof baseOptionsWithNonce.onReady === "function") {
+        baseOptionsWithNonce.onReady(detail);
       }
     };
 
@@ -43,18 +53,23 @@ function useHostedChatKit(baseOptions) {
         detail?.error ?? detail ?? new Error("Unbekannter ChatKit-Fehler");
       setError(err);
       setStatus("error");
-      if (typeof baseOptions.onError === "function") {
-        baseOptions.onError(detail);
+      if (typeof baseOptionsWithNonce.onError === "function") {
+        baseOptionsWithNonce.onError(detail);
       }
     };
 
     return {
-      ...baseOptions,
+      ...baseOptionsWithNonce,
       onClientTool: clientToolHandler,
       onReady: handleReady,
       onError: handleError,
     };
-  }, [baseOptions, clientToolHandler]);
+  }, [baseOptionsWithNonce, clientToolHandler]);
+
+  React.useEffect(() => {
+    setStatus("initializing");
+    setError(null);
+  }, [resetNonce]);
 
   const chatkit = useChatKit(wrappedOptions);
   return {
@@ -119,8 +134,21 @@ const handleClientTool = async (toolCall, callbacks) => {
 };
 
 export default function App() {
-  const chatkit = useHostedChatKit(chatKitOptions);
+  const [chatInstanceId, setChatInstanceId] = React.useState(0);
+  const chatkit = useHostedChatKit(chatKitOptions, chatInstanceId);
   const { status, error, control, elementRef, onClientTool } = chatkit;
+  const showChatErrorBanner = status === "error" || Boolean(error);
+
+  const handleRestartChat = React.useCallback(() => {
+    if (
+      typeof window !== "undefined" &&
+      typeof window.location?.reload === "function"
+    ) {
+      window.location.reload();
+      return;
+    }
+    setChatInstanceId((prev) => prev + 1);
+  }, [setChatInstanceId]);
 
   const sendAssistantMessage = React.useCallback(
     async (text) => {
@@ -179,16 +207,26 @@ export default function App() {
           </div>
         )}
 
-        {error && (
+        {showChatErrorBanner && (
           <div className="app-error">
-            <p>Fehler beim Laden des Chat-Assistenten.</p>
-            <pre>{String(error?.message ?? error)}</pre>
+            <p>{SESSION_INACTIVE_MESSAGE}</p>
+            <p>{SESSION_RESTART_PROMPT}</p>
           </div>
         )}
 
         <div className="chat-shell">
           <div className="chat-container">
+            {showChatErrorBanner && (
+              <div className="chat-error-overlay">
+                <p>{SESSION_INACTIVE_MESSAGE}</p>
+                <p>{SESSION_RESTART_PROMPT}</p>
+                <button type="button" onClick={handleRestartChat}>
+                  {SESSION_RESTART_BUTTON}
+                </button>
+              </div>
+            )}
             <ChatKit
+              key={chatInstanceId}
               ref={elementRef}
               control={control}
               className="chatkit-element"

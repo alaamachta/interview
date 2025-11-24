@@ -50,12 +50,21 @@ npm run dev
 - Vite serves `http://localhost:5173/interview/` by default (`vite.config.js` sets `base: '/interview/'`).
 - The ChatKit widget fetches client secrets from `VITE_CHATKIT_API_URL` (defaults to the backend's `/interview/api/chatkit` route when the env var is unset).
 - Escalation actions post directly to `/interview/api/escalations` (see `src/chatkit/escalationPayload.ts`). Ensure your dev server proxies to the running FastAPI instance or run both on the same host.
+- `npm run lint` runs ESLint across the frontend; `frontend/vite.config.js` now derives `__dirname` via `fileURLToPath`/`dirname` (node:url + node:path) so the config file is treated as a Node script and no longer trips `no-undef`.
 
 ### Frontend ↔ Backend contract
 
 - ChatKit session bootstrap: `POST /interview/api/chatkit/session` returns a client secret, domain public key, and metadata consumed by `chatKitOptions`.
 - Escalations: widget/tool calls send sanitized payloads to `POST /interview/api/escalations`, which persists them via SQLAlchemy and responds with the ticket record.
 - Dashboard API: React dashboard fetches `GET /interview/api/escalations` and uses `PATCH /interview/api/escalations/{id}/status` to mark tickets as `offen` or `erledigt` (requires the `x-admin-token` header matching `ADMIN_TOKEN`).
+
+## ChatKit session lifecycle
+
+- `POST /interview/api/chatkit/session` always creates a fresh ChatKit session using the official API. The FastAPI handler logs success/failure (with headers `OpenAI-Beta: chatkit_beta=v1`) and returns `{ "client_secret", "expires_at", "session_id" }` to the widget. The backend never returns the project API key to the browser.
+- The session lifetime defaults to **3600 seconds** (≈ 1 hour) via `CHATKIT_SESSION_TTL_SECONDS` and is clamped to a minimum of 300 seconds for safety. Adjust the env var if you need shorter/longer-lived sessions.
+- The frontend’s `getClientSecret` callback (`frontend/src/chatkit/options.ts`) now posts to `/interview/api/chatkit/session` on every refresh request so idle chats automatically pull a new secret. Failures are logged to the console and surfaced via a controlled UI state.
+- When a secret expires or the session cannot be refreshed, the React shell renders the German overlay _„Ihre Sitzung war zu lange inaktiv und wurde beendet. Bitte starten Sie den Chat neu.“_ with a **Chat neu starten** button. The button reloads the page (or remounts the widget if `window` is unavailable) so users never see ChatKit’s generic “Something went wrong” pane.
+- Manual QA: start the dev server(s), open `https://landki.com/interview/` (or local equivalent), send a few messages, wait 10–15 minutes, and send another message. Expected outcome: the chat either continues seamlessly with a renewed secret or shows the overlay/button above the widget, never the generic ChatKit error.
 
 ## Escalations & Dashboard
 
