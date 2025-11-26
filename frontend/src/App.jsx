@@ -20,11 +20,161 @@ const SESSION_INACTIVE_MESSAGE =
   "Ihre Sitzung war zu lange inaktiv und wurde beendet.";
 const SESSION_RESTART_PROMPT = "Bitte starten Sie den Chat neu.";
 const SESSION_RESTART_BUTTON = "Chat neu starten";
+const TECHNICAL_ERROR_TEXT = {
+  rate_limit:
+    "Aktuell gibt es ein Nutzungs-Limit oder eine kurzzeitige Begrenzung. Ihre bisherigen Nachrichten bleiben erhalten – bitte versuchen Sie es in kurzer Zeit erneut.",
+  quota:
+    "Aktuell gibt es ein Nutzungs-Limit oder eine kurzzeitige Begrenzung. Ihre bisherigen Nachrichten bleiben erhalten – bitte versuchen Sie es in kurzer Zeit erneut.",
+  network:
+    "Es ist ein technischer Fehler aufgetreten. Ihre bisherigen Nachrichten bleiben erhalten – bitte laden Sie die Seite neu oder versuchen Sie es später erneut.",
+  server:
+    "Es ist ein technischer Fehler aufgetreten. Ihre bisherigen Nachrichten bleiben erhalten – bitte laden Sie die Seite neu oder versuchen Sie es später erneut.",
+  unknown:
+    "Es ist ein technischer Fehler aufgetreten. Ihre bisherigen Nachrichten bleiben erhalten – bitte laden Sie die Seite neu oder versuchen Sie es später erneut.",
+};
+const SESSION_ERROR_KINDS = new Set([
+  "session_expired",
+  "invalid_ephemeral_key",
+]);
+const SESSION_ERROR_CODES = [
+  "session_expired",
+  "client_secret_expired",
+  "client_secret_invalid",
+  "client_secret_revoked",
+  "invalid_ephemeral_key",
+  "invalid_client_secret",
+];
+const RATE_LIMIT_ERROR_CODES = [
+  "rate_limit_exceeded",
+  "requests_rate_exceeded",
+  "requests_per_minute_exceeded",
+];
+const QUOTA_ERROR_CODES = ["insufficient_quota", "insufficient_quota_exceeded"];
+const NETWORK_ERROR_MARKERS = [
+  "failed to fetch",
+  "networkerror",
+  "load failed",
+  "network request failed",
+];
+
+const pickString = (...values) => {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) {
+      return value;
+    }
+  }
+  return null;
+};
+
+const pickNumber = (...values) => {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+  }
+  return null;
+};
+
+const isNetworkError = (error) => {
+  const source = error?.error ?? error;
+  if (!source) return false;
+  const message = pickString(
+    source?.message,
+    source?.error?.message,
+    source?.cause?.message
+  );
+  const normalizedMessage = message?.toLowerCase();
+  if (!normalizedMessage) {
+    return Boolean(
+      source?.name === "TypeError" || source?.cause?.name === "TypeError"
+    );
+  }
+  return NETWORK_ERROR_MARKERS.some((marker) =>
+    normalizedMessage.includes(marker)
+  );
+};
+
+const classifyChatError = (detail) => {
+  const source = detail?.error ?? detail ?? null;
+  if (!source) return "unknown";
+  const status = pickNumber(
+    source.status,
+    source?.response?.status,
+    source?.error?.status,
+    source?.cause?.status,
+    source?.data?.status
+  );
+  const rawCode = pickString(
+    source.code,
+    source?.error?.code,
+    source?.cause?.code,
+    source?.response?.data?.error?.code,
+    source?.data?.error?.code,
+    source?.body?.error?.code
+  );
+  const normalizedCode = rawCode?.toLowerCase() ?? null;
+  const message = pickString(
+    source.message,
+    source?.error?.message,
+    source?.cause?.message,
+    typeof source?.body === "string" ? source.body : null,
+    typeof source?.response?.body === "string" ? source.response.body : null
+  );
+  const normalizedMessage = message?.toLowerCase() ?? "";
+  const messageHasSessionMarker = SESSION_ERROR_CODES.some(
+    (marker) =>
+      normalizedMessage.includes(marker) ||
+      normalizedMessage.includes(marker.replace(/_/g, "-"))
+  );
+  if (
+    status === 401 ||
+    status === 403 ||
+    (normalizedCode &&
+      SESSION_ERROR_CODES.some((marker) =>
+        normalizedCode.includes(marker)
+      )) ||
+    messageHasSessionMarker
+  ) {
+    return normalizedCode === "invalid_ephemeral_key"
+      ? "invalid_ephemeral_key"
+      : "session_expired";
+  }
+  if (
+    status === 429 ||
+    (normalizedCode &&
+      (RATE_LIMIT_ERROR_CODES.includes(normalizedCode) ||
+        normalizedCode.includes("rate_limit")))
+  ) {
+    if (
+      normalizedCode &&
+      (QUOTA_ERROR_CODES.includes(normalizedCode) ||
+        normalizedCode.includes("quota"))
+    ) {
+      return "quota";
+    }
+    return "rate_limit";
+  }
+  if (
+    normalizedCode &&
+    (QUOTA_ERROR_CODES.includes(normalizedCode) ||
+      normalizedCode.includes("quota"))
+  ) {
+    return "quota";
+  }
+  if (status && status >= 500) {
+    return "server";
+  }
+  if (isNetworkError(source)) {
+    return "network";
+  }
+  return "unknown";
+};
 
 function useHostedChatKit(baseOptions, resetNonce = 0) {
   const [status, setStatus] = React.useState("initializing");
   const [error, setError] = React.useState(null);
   const [clientToolHandler, setClientToolHandler] = React.useState();
+  const [errorDetail, setErrorDetail] = React.useState(null);
   const baseOptionsWithNonce = React.useMemo(() => {
     // Touch resetNonce to ensure useMemo reruns when we remount ChatKit.
     void resetNonce;
@@ -43,6 +193,7 @@ function useHostedChatKit(baseOptions, resetNonce = 0) {
     const handleReady = (detail) => {
       setStatus("ready");
       setError(null);
+      setErrorDetail(null);
       if (typeof baseOptionsWithNonce.onReady === "function") {
         baseOptionsWithNonce.onReady(detail);
       }
@@ -53,6 +204,7 @@ function useHostedChatKit(baseOptions, resetNonce = 0) {
         detail?.error ?? detail ?? new Error("Unbekannter ChatKit-Fehler");
       setError(err);
       setStatus("error");
+      setErrorDetail(detail ?? err);
       if (typeof baseOptionsWithNonce.onError === "function") {
         baseOptionsWithNonce.onError(detail);
       }
@@ -69,6 +221,7 @@ function useHostedChatKit(baseOptions, resetNonce = 0) {
   React.useEffect(() => {
     setStatus("initializing");
     setError(null);
+    setErrorDetail(null);
   }, [resetNonce]);
 
   const chatkit = useChatKit(wrappedOptions);
@@ -76,6 +229,7 @@ function useHostedChatKit(baseOptions, resetNonce = 0) {
     ...chatkit,
     status,
     error,
+    lastErrorDetail: errorDetail,
     elementRef: chatkit.ref,
     onClientTool,
   };
@@ -135,11 +289,26 @@ const handleClientTool = async (toolCall, callbacks) => {
 
 export default function App() {
   const [chatInstanceId, setChatInstanceId] = React.useState(0);
+  const [sessionEnded, setSessionEnded] = React.useState(false);
+  const [chatErrorKind, setChatErrorKind] = React.useState(null);
   const chatkit = useHostedChatKit(chatKitOptions, chatInstanceId);
-  const { status, error, control, elementRef, onClientTool } = chatkit;
-  const showChatErrorBanner = status === "error" || Boolean(error);
+  const {
+    status,
+    error,
+    control,
+    elementRef,
+    onClientTool,
+    lastErrorDetail,
+  } = chatkit;
+  const showSessionExpiredBanner = sessionEnded;
+  const technicalErrorMessage =
+    chatErrorKind && !SESSION_ERROR_KINDS.has(chatErrorKind)
+      ? TECHNICAL_ERROR_TEXT[chatErrorKind] ?? TECHNICAL_ERROR_TEXT.unknown
+      : null;
 
   const handleRestartChat = React.useCallback(() => {
+    setSessionEnded(false);
+    setChatErrorKind(null);
     if (
       typeof window !== "undefined" &&
       typeof window.location?.reload === "function"
@@ -198,6 +367,24 @@ export default function App() {
     onClientTool(handleEscalationTool);
   }, [onClientTool, handleEscalationTool]);
 
+  React.useEffect(() => {
+    if (!lastErrorDetail) {
+      return;
+    }
+    const kind = classifyChatError(lastErrorDetail);
+    setChatErrorKind(kind);
+    if (SESSION_ERROR_KINDS.has(kind)) {
+      setSessionEnded(true);
+    }
+  }, [lastErrorDetail]);
+
+  React.useEffect(() => {
+    if (status === "ready") {
+      setSessionEnded(false);
+      setChatErrorKind(null);
+    }
+  }, [status]);
+
   return (
     <div className="app-root">
       <main className="app-main">
@@ -207,7 +394,7 @@ export default function App() {
           </div>
         )}
 
-        {showChatErrorBanner && (
+        {showSessionExpiredBanner && (
           <div className="app-error">
             <p>{SESSION_INACTIVE_MESSAGE}</p>
             <p>{SESSION_RESTART_PROMPT}</p>
@@ -216,7 +403,16 @@ export default function App() {
 
         <div className="chat-shell">
           <div className="chat-container">
-            {showChatErrorBanner && (
+            {technicalErrorMessage && (
+              <div
+                className="chat-status-toast"
+                role="status"
+                aria-live="polite"
+              >
+                <p>{technicalErrorMessage}</p>
+              </div>
+            )}
+            {showSessionExpiredBanner && (
               <div className="chat-error-overlay">
                 <p>{SESSION_INACTIVE_MESSAGE}</p>
                 <p>{SESSION_RESTART_PROMPT}</p>
