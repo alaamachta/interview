@@ -81,6 +81,7 @@ npm run dev
 
 - ChatKit session bootstrap: `POST /interview/api/chatkit/session` returns a client secret, domain public key, and metadata consumed by `chatKitOptions`.
 - Escalations: widget/tool calls send sanitized payloads to `POST /interview/api/escalations`, which persists them via SQLAlchemy and responds with the ticket record.
+- Agent Builder function tool: the hosted assistant invokes `POST /interview/api/tools/submit_ticket` with `{ name, contact, wants_reply, category, message, source }`. The FastAPI handler maps this payload to the same escalation model so tickets show up identically in the dashboard and returns `{ "status": "ok", "ticket_id": ... }` to unblock the workflow.
 - Dashboard API: React dashboard fetches `GET /interview/api/escalations` and uses `PATCH /interview/api/escalations/{id}/status` to mark tickets as `offen` or `erledigt` (requires the `x-admin-token` header matching `ADMIN_TOKEN`).
 
 ## ChatKit session lifecycle

@@ -56,6 +56,8 @@ const NETWORK_ERROR_MARKERS = [
   "load failed",
   "network request failed",
 ];
+const SUBMIT_TICKET_TOOL_NAME = "submit_ticket";
+const SUBMIT_TICKET_ENDPOINT = "/interview/api/tools/submit_ticket";
 
 const pickString = (...values) => {
   for (const value of values) {
@@ -73,6 +75,60 @@ const pickNumber = (...values) => {
     }
   }
   return null;
+};
+
+const isPlainObject = (value) =>
+  Boolean(value && typeof value === "object" && !Array.isArray(value));
+
+const parseJsonValue = (value) => {
+  if (typeof value !== "string") return null;
+  try {
+    const parsed = JSON.parse(value);
+    return isPlainObject(parsed) ? parsed : null;
+  } catch (error) {
+    console.warn("[Interview] Failed to parse submit_ticket arguments", error);
+    return null;
+  }
+};
+
+const extractSubmitTicketParams = (toolCall) => {
+  if (isPlainObject(toolCall?.params)) {
+    return toolCall.params;
+  }
+  const directArguments = toolCall?.arguments ?? toolCall?.args;
+  if (typeof directArguments === "string") {
+    const parsed = parseJsonValue(directArguments);
+    if (parsed) return parsed;
+  } else if (isPlainObject(directArguments)) {
+    return directArguments;
+  }
+  const payloadSource =
+    toolCall?.params?.payload ??
+    toolCall?.action?.payload ??
+    toolCall?.payload ??
+    null;
+  if (isPlainObject(payloadSource)) {
+    return payloadSource;
+  }
+  return null;
+};
+
+const submitTicketViaBackend = async (payload) => {
+  const response = await fetch(SUBMIT_TICKET_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload ?? {}),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(
+      data?.detail ?? "submit_ticket request failed"
+    );
+    error.status = response.status;
+    error.body = data;
+    throw error;
+  }
+  return data;
 };
 
 const isNetworkError = (error) => {
@@ -173,21 +229,26 @@ const classifyChatError = (detail) => {
 function useHostedChatKit(baseOptions, resetNonce = 0) {
   const [status, setStatus] = React.useState("initializing");
   const [error, setError] = React.useState(null);
-  const [clientToolHandler, setClientToolHandler] = React.useState();
   const [errorDetail, setErrorDetail] = React.useState(null);
+  const clientToolHandlerRef = React.useRef(null);
   const baseOptionsWithNonce = React.useMemo(() => {
     // Touch resetNonce to ensure useMemo reruns when we remount ChatKit.
     void resetNonce;
     return { ...baseOptions };
   }, [baseOptions, resetNonce]);
 
-  const onClientTool = React.useCallback(
-    (handler) => {
-      if (handler === clientToolHandler) return;
-      setClientToolHandler(() => handler);
-    },
-    [clientToolHandler]
-  );
+  const onClientTool = React.useCallback((handler) => {
+    clientToolHandlerRef.current = handler;
+  }, []);
+
+  const clientToolBridge = React.useCallback((toolCall) => {
+    const handler = clientToolHandlerRef.current;
+    if (typeof handler === "function") {
+      return handler(toolCall);
+    }
+    console.warn("[Interview] Received client tool call without handler", toolCall);
+    return undefined;
+  }, []);
 
   const wrappedOptions = React.useMemo(() => {
     const handleReady = (detail) => {
@@ -212,11 +273,11 @@ function useHostedChatKit(baseOptions, resetNonce = 0) {
 
     return {
       ...baseOptionsWithNonce,
-      onClientTool: clientToolHandler,
+      onClientTool: clientToolBridge,
       onReady: handleReady,
       onError: handleError,
     };
-  }, [baseOptionsWithNonce, clientToolHandler]);
+  }, [baseOptionsWithNonce, clientToolBridge]);
 
   React.useEffect(() => {
     setStatus("initializing");
@@ -240,10 +301,34 @@ const handleClientTool = async (toolCall, callbacks) => {
   const params = toolCall?.params ?? {};
   const actionSource = params.action ?? toolCall?.action ?? {};
   const payloadSource = actionSource.payload ?? params.payload;
-  const type = actionSource.type ?? toolCall?.type;
+  const toolName =
+    toolCall?.name ??
+    actionSource.type ??
+    toolCall?.type ??
+    null;
 
-  if (type !== ESCALATION_ACTION) {
-    return;
+  if (toolName === SUBMIT_TICKET_TOOL_NAME) {
+    const submitPayload = extractSubmitTicketParams(toolCall);
+    if (
+      !submitPayload ||
+      typeof submitPayload.message !== "string" ||
+      typeof submitPayload.category !== "string"
+    ) {
+      console.warn("[Interview] submit_ticket payload missing fields", toolCall);
+      throw new Error("submit_ticket payload missing required fields");
+    }
+
+    try {
+      const result = await submitTicketViaBackend(submitPayload);
+      return result;
+    } catch (error) {
+      console.error("[Interview] submit_ticket request failed", error);
+      throw error;
+    }
+  }
+
+  if (toolName !== ESCALATION_ACTION) {
+    return undefined;
   }
 
   const payload = buildEscalationPayload(payloadSource, {
@@ -263,27 +348,31 @@ const handleClientTool = async (toolCall, callbacks) => {
 
   try {
     const response = await postEscalation(payload);
+    const body = await response.json().catch(() => ({}));
 
     if (!response.ok) {
       console.error(
         "[Interview] Escalation POST failed",
         response.status,
-        await response.text()
+        body
       );
       if (onError) {
         await onError();
       }
-    } else {
-      console.info("[Interview] Escalation ticket sent");
-      if (onSuccess) {
-        await onSuccess();
-      }
+      throw new Error("Escalation POST failed");
     }
+
+    console.info("[Interview] Escalation ticket sent");
+    if (onSuccess) {
+      await onSuccess();
+    }
+    return body;
   } catch (err) {
     console.error("[Interview] Escalation POST error", err);
     if (onError) {
       await onError();
     }
+    throw err;
   }
 };
 

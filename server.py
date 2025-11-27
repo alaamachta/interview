@@ -18,14 +18,14 @@ import os
 from datetime import datetime, timedelta
 from enum import Enum
 from pathlib import Path
-from typing import Generator, List, Optional
+from typing import Any, Dict, Generator, List, Optional
 import logging
 
 from fastapi import Depends, FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from sqlalchemy import Boolean, DateTime, Integer, String, Text, create_engine, select
 from sqlalchemy.orm import Mapped, Session, declarative_base, mapped_column, sessionmaker
 from dotenv import load_dotenv
@@ -145,6 +145,15 @@ class EscalationStatusUpdate(BaseModel):
 
 Base.metadata.create_all(engine)
 
+SUBMIT_TICKET_CATEGORIES = {
+    "Terminvereinbarung",
+    "Feedback",
+    "Technische Frage",
+    "Bewerbung",
+    "Allgemeine Anfrage",
+    "Sonstiges",
+}
+
 
 def get_db() -> Generator[Session, None, None]:
     session = SessionLocal()
@@ -159,6 +168,104 @@ def sanitize_text(value: Optional[str]) -> Optional[str]:
         return None
     trimmed = value.strip()
     return trimmed or None
+
+
+def persist_escalation_ticket(db: Session, payload: EscalationCreate) -> EscalationTicket:
+    """Store an escalation ticket and return the refreshed ORM entity."""
+    ticket = EscalationTicket(
+        title=sanitize_text(payload.title) or payload.title,
+        category=sanitize_text(payload.category) or payload.category,
+        message=sanitize_text(payload.message) or payload.message,
+        language=sanitize_text(payload.language) or payload.language,
+        name=sanitize_text(payload.name),
+        email=sanitize_text(payload.email),
+        allow_contact=bool(payload.allow_contact),
+        conversation_id=sanitize_text(payload.conversation_id),
+        source=sanitize_text(payload.source) or "interview_assistant",
+        version=payload.version or 1,
+        status=EscalationStatus.offen.value,
+    )
+
+    db.add(ticket)
+    db.commit()
+    db.refresh(ticket)
+    logger.info(
+        "Escalation ticket stored: %s",
+        {"id": ticket.id, "category": ticket.category, "source": ticket.source},
+    )
+    return ticket
+
+
+class SubmitTicketArguments(BaseModel):
+    name: Optional[str] = None
+    contact: Optional[str] = None
+    wants_reply: bool = False
+    category: str
+    message: str
+    source: Optional[str] = None
+    conversation_id: Optional[str] = None
+
+    class Config:
+        extra = "ignore"
+
+    @field_validator("wants_reply", mode="before")
+    @classmethod
+    def normalize_wants_reply(cls, value: Any) -> bool:
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "ja"}:
+                return True
+            if normalized in {"0", "false", "no", "nein"}:
+                return False
+        return bool(value)
+
+
+def normalize_submit_ticket_category(raw_value: Optional[str]) -> str:
+    normalized = sanitize_text(raw_value)
+    if not normalized:
+        return "Sonstiges"
+    normalized_lower = normalized.lower()
+    for category in SUBMIT_TICKET_CATEGORIES:
+        if normalized_lower == category.lower():
+            return category
+    return "Sonstiges"
+
+
+def build_submit_ticket_title(category: str, person_name: Optional[str]) -> str:
+    person = sanitize_text(person_name) or "Anonym"
+    title = f"{category} – {person}"
+    return title[:255]
+
+
+def coerce_contact_value(value: Optional[str]) -> str:
+    sanitized = sanitize_text(value)
+    return sanitized or "-"
+
+
+def extract_submit_ticket_arguments(body: Any) -> Dict[str, Any]:
+    if isinstance(body, dict):
+        if isinstance(body.get("params"), dict):
+            return body["params"]
+        arguments = body.get("arguments")
+        if isinstance(arguments, str):
+            try:
+                parsed_arguments = json.loads(arguments)
+                if isinstance(parsed_arguments, dict):
+                    return parsed_arguments
+            except json.JSONDecodeError:
+                logger.warning("submit_ticket arguments JSON decode failed")
+        elif isinstance(arguments, dict):
+            return arguments
+        payload = body.get("payload")
+        if isinstance(payload, dict):
+            return payload
+        action = body.get("action")
+        if isinstance(action, dict):
+            payload = action.get("payload")
+            if isinstance(payload, dict):
+                return payload
+        return body
+    return {}
 
 
 def admin_required(x_admin_token: Optional[str] = Header(None)) -> str:
@@ -272,30 +379,83 @@ async def create_escalation(payload: EscalationCreate, db: Session = Depends(get
         "Escalation payload received: %s",
         payload.dict(exclude_none=True),
     )
-    ticket = EscalationTicket(
-        title=sanitize_text(payload.title) or payload.title,
-        category=sanitize_text(payload.category) or payload.category,
-        message=sanitize_text(payload.message) or payload.message,
-        language=sanitize_text(payload.language) or payload.language,
-        name=sanitize_text(payload.name),
-        email=sanitize_text(payload.email),
-        allow_contact=bool(payload.allow_contact),
-        conversation_id=sanitize_text(payload.conversation_id),
-        source=sanitize_text(payload.source) or "interview_assistant",
-        version=payload.version or 1,
-        status=EscalationStatus.offen.value,
-    )
 
     try:
-        db.add(ticket)
-        db.commit()
-        db.refresh(ticket)
-        logger.info(f"Escalation ticket stored: id={ticket.id} category={ticket.category}")
+        ticket = persist_escalation_ticket(db, payload)
     except Exception as process_error:
         logger.exception("Failed to store escalation ticket")
         raise HTTPException(status_code=500, detail="Failed to store escalation ticket") from process_error
 
     return {"ok": True, "ticket_id": ticket.id}
+
+
+@app.post("/interview/api/tools/submit_ticket")
+async def submit_ticket_tool(request: Request, db: Session = Depends(get_db)):
+    """Function-tool backend invoked by the Interview Assistant submit_ticket call."""
+    response_payload = {"status": "error", "ticket_id": None, "category": None}
+
+    try:
+        raw_body = await request.json()
+    except Exception:
+        logger.warning("submit_ticket tool payload could not be parsed as JSON")
+        logger.info("submit_ticket response body: %s", response_payload)
+        return response_payload
+
+    arguments_dict = extract_submit_ticket_arguments(raw_body)
+    if not isinstance(arguments_dict, dict):
+        logger.warning("submit_ticket tool payload missing required fields")
+        logger.info("submit_ticket response body: %s", response_payload)
+        return response_payload
+
+    try:
+        parsed_arguments = SubmitTicketArguments(**arguments_dict)
+    except ValidationError as exc:
+        logger.warning("submit_ticket tool arguments validation failed: %s", exc.errors())
+        logger.info("submit_ticket response body: %s", response_payload)
+        return response_payload
+
+    category = normalize_submit_ticket_category(parsed_arguments.category)
+    message = sanitize_text(parsed_arguments.message) or parsed_arguments.message
+    if not message:
+        logger.warning("submit_ticket tool call missing message text")
+        logger.info("submit_ticket response body: %s", response_payload)
+        return response_payload
+
+    ticket_payload = EscalationCreate(
+        title=build_submit_ticket_title(category, parsed_arguments.name),
+        category=category,
+        message=message,
+        language="de",
+        source=sanitize_text(parsed_arguments.source) or "interview_assistant",
+        version=1,
+        name=sanitize_text(parsed_arguments.name) or "Anonym",
+        email=coerce_contact_value(parsed_arguments.contact),
+        allow_contact=bool(parsed_arguments.wants_reply),
+        conversation_id=sanitize_text(parsed_arguments.conversation_id),
+    )
+
+    logger.info(
+        "submit_ticket tool payload: %s",
+        {
+            "source": ticket_payload.source,
+            "category": ticket_payload.category,
+            "allow_contact": ticket_payload.allow_contact,
+        },
+    )
+
+    try:
+        ticket = persist_escalation_ticket(db, ticket_payload)
+        response_payload = {
+            "status": "ok",
+            "ticket_id": str(ticket.id),
+            "category": ticket.category,
+        }
+    except Exception:
+        logger.exception("submit_ticket tool failed")
+        response_payload = {"status": "error", "ticket_id": None, "category": None}
+
+    logger.info("submit_ticket response body: %s", response_payload)
+    return response_payload
 
 
 @app.get("/interview/api/escalations", response_model=List[EscalationResponse])
