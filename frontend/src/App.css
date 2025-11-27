@@ -167,6 +167,30 @@ body,
   margin: 0;
 }
 
+.escalation-toast {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 9999;
+  pointer-events: none;
+  background: rgba(10, 20, 40, 0.96);
+  padding: 1.25rem 1.75rem;
+  border-radius: 1rem;
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.55);
+  max-width: 420px;
+  width: calc(100% - 2rem);
+  color: #f8fafc;
+  text-align: center;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  white-space: pre-line;
+}
+
+.escalation-toast p {
+  margin: 0.1rem 0;
+}
+
 .chatkit-element {
   width: 100%;
   height: 100%;

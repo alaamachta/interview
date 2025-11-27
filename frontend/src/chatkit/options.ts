@@ -5,6 +5,7 @@ import {
   buildEscalationPayload,
   postEscalation,
 } from "./escalationPayload";
+import { dispatchEscalationSuccessEvent } from "./events";
 
 const apiBase =
   import.meta.env.VITE_CHATKIT_API_URL ?? "/interview/api/chatkit";
@@ -89,6 +90,11 @@ export const chatKitOptions: ChatKitOptions = {
             "Escalation widget ticket successfully posted:",
             responseData
           );
+          const ticketId = responseData?.ticket_id ?? null;
+          dispatchEscalationSuccessEvent({
+            ticketId,
+            source: "widget",
+          });
         }
       } catch (error) {
         console.error("Escalation widget POST error:", error);

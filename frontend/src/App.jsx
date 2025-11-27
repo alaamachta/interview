@@ -7,10 +7,12 @@ import {
   ESCALATION_ACTION,
   postEscalation,
 } from "./chatkit/escalationPayload";
+import { ESCALATION_SUCCESS_EVENT } from "./chatkit/events";
 
 const SUCCESS_ASSISTANT_MESSAGE =
-  "✅ Nachricht wurde an Alaa gesendet. Vielen Dank!\n" +
-  "Wenn Sie weitere Fragen haben, können Sie sie gerne stellen.";
+  "Ihre Nachricht wurde an Alaa gesendet.\n" +
+  "Vielen\u00a0Dank! 😊\n" +
+  "Wenn Sie weitere Fragen haben, können Sie sie einfach hier im Chat stellen.";
 
 const ERROR_ASSISTANT_MESSAGE =
   "❌ Die Nachricht konnte leider nicht gesendet werden.\n" +
@@ -58,6 +60,7 @@ const NETWORK_ERROR_MARKERS = [
 ];
 const SUBMIT_TICKET_TOOL_NAME = "submit_ticket";
 const SUBMIT_TICKET_ENDPOINT = "/interview/api/tools/submit_ticket";
+const ESCALATION_SUCCESS_TOAST_DURATION_MS = 10000;
 
 const pickString = (...values) => {
   for (const value of values) {
@@ -380,6 +383,9 @@ export default function App() {
   const [chatInstanceId, setChatInstanceId] = React.useState(0);
   const [sessionEnded, setSessionEnded] = React.useState(false);
   const [chatErrorKind, setChatErrorKind] = React.useState(null);
+  const [isEscalationToastVisible, setIsEscalationToastVisible] =
+    React.useState(false);
+  const [escalationToastTimer, setEscalationToastTimer] = React.useState(null);
   const chatkit = useHostedChatKit(chatKitOptions, chatInstanceId);
   const {
     status,
@@ -474,8 +480,47 @@ export default function App() {
     }
   }, [status]);
 
+  React.useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+    const handleEscalationSuccess = () => {
+      if (escalationToastTimer) {
+        window.clearTimeout(escalationToastTimer);
+      }
+      setIsEscalationToastVisible(true);
+      const timer = window.setTimeout(() => {
+        setIsEscalationToastVisible(false);
+        setEscalationToastTimer(null);
+      }, ESCALATION_SUCCESS_TOAST_DURATION_MS);
+      setEscalationToastTimer(timer);
+    };
+
+    window.addEventListener(
+      ESCALATION_SUCCESS_EVENT,
+      handleEscalationSuccess
+    );
+
+    return () => {
+      window.removeEventListener(
+        ESCALATION_SUCCESS_EVENT,
+        handleEscalationSuccess
+      );
+      if (escalationToastTimer) {
+        window.clearTimeout(escalationToastTimer);
+      }
+    };
+  }, [escalationToastTimer]);
+
   return (
     <div className="app-root">
+      {isEscalationToastVisible && (
+        <div className="escalation-toast" role="status" aria-live="polite">
+          {SUCCESS_ASSISTANT_MESSAGE.split("\n").map((line, index) => (
+            <p key={`escalation-toast-line-${index}`}>{line}</p>
+          ))}
+        </div>
+      )}
       <main className="app-main">
         {status !== "ready" && !error && (
           <div className="app-loading">
