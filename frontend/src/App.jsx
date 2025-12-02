@@ -619,6 +619,9 @@ export default function App() {
         </div>
       )}
       <main className="app-main">
+        <h1 className="sr-only">
+          AI Interview Assistant Demo – LandKI by Alaa Mashta
+        </h1>
         {status !== "ready" && !error && (
           <div className="app-loading">
             <p>Lädt Chat-Assistent…</p>
