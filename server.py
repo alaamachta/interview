@@ -570,8 +570,10 @@ async def chatkit_session(request: Request):
         try:
             body = await request.json()
             current_secret = body.get("current_client_secret") or body.get("currentClientSecret")
+            provided_user_id = body.get("userId") or body.get("user_id")
         except Exception:
             current_secret = None
+            provided_user_id = None
 
         # Call OpenAI ChatKit Sessions API
         chatkit_api_base = "https://api.openai.com"
@@ -587,9 +589,15 @@ async def chatkit_session(request: Request):
         if DOMAIN_PUBLIC_KEY:
             headers["OpenAI-Domain-Public-Key"] = DOMAIN_PUBLIC_KEY
         
-        # Generate a user ID (in production, this should be a real user ID)
+        # Generate or reuse a user ID provided by the frontend
         import uuid
-        user_id = str(uuid.uuid4())
+        user_id = None
+        if isinstance(provided_user_id, str):
+            candidate = provided_user_id.strip()
+            if candidate:
+                user_id = candidate
+        if not user_id:
+            user_id = str(uuid.uuid4())
         
         # ChatKit Sessions API currently rejects TTLs > 600s, clamp to avoid API 400s
         ttl_seconds = min(max(300, CHATKIT_SESSION_TTL_SECONDS), 600)
@@ -614,6 +622,7 @@ async def chatkit_session(request: Request):
                     "event": "chatkit_session_create_start",
                     "workflow_id": workflow_id,
                     "endpoint": "/interview/api/chatkit/session",
+                    "user_id": user_id,
                     "ttl_seconds": ttl_seconds,
                 },
                 ensure_ascii=False,
@@ -653,6 +662,7 @@ async def chatkit_session(request: Request):
                         "endpoint": "/interview/api/chatkit/session",
                         "status_code": response.status_code,
                         "session_id": session_data.get("id"),
+                        "user_id": user_id,
                         "ttl_seconds": ttl_seconds,
                     },
                     ensure_ascii=False,

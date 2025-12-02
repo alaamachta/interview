@@ -1,6 +1,6 @@
 import React from "react";
 import { ChatKit, useChatKit } from "@openai/chatkit-react";
-import { chatKitOptions } from "./chatkit/options";
+import { createChatKitOptions } from "./chatkit/options";
 import "./App.css";
 import {
   buildEscalationPayload,
@@ -8,14 +8,6 @@ import {
   postEscalation,
 } from "./chatkit/escalationPayload";
 import { ESCALATION_SUCCESS_EVENT } from "./chatkit/events";
-
-const STORAGE_PURGE_PATTERNS = [
-  "chatkit",
-  "openai",
-  "client_secret",
-  "conversation",
-  "thread",
-];
 
 const SUCCESS_ASSISTANT_MESSAGE =
   "Ihre Nachricht wurde an Alaa gesendet.\n" +
@@ -27,11 +19,14 @@ const ERROR_ASSISTANT_MESSAGE =
   "Bitte versuchen Sie es später erneut.";
 
 const SESSION_EXPIRED_TITLE = "Die Sitzung ist abgelaufen";
-const SESSION_EXPIRED_TEXT =
-  "Aus Sicherheitsgründen endet eine Unterhaltung nach ca. 10 Minuten. " +
-  "Ihre bisherigen Nachrichten bleiben sichtbar. Bitte starten Sie eine neue Sitzung.";
+const SESSION_EXPIRED_TEXT = [
+  "Aus Sicherheitsgründen endet eine Unterhaltung nach ca. 10 Minuten.",
+  "Ihre bisherigen Chats werden im Chatverlauf gespeichert und sind nur auf Ihrem Gerät sichtbar.",
+  "Sie können dort frühere Gespräche öffnen oder mit einem neuen Chat fortfahren.",
+];
 const SESSION_RESTART_BUTTON = "Neuen Chat starten";
 const SESSION_EXPIRY_MS = 570 * 1000;
+const USER_ID_STORAGE_KEY = "landki_user_id";
 const TECHNICAL_ERROR_TEXT = {
   rate_limit:
     "Aktuell gibt es ein Nutzungs-Limit oder eine kurzzeitige Begrenzung. Ihre bisherigen Nachrichten bleiben erhalten – bitte versuchen Sie es in kurzer Zeit erneut.",
@@ -72,31 +67,29 @@ const SUBMIT_TICKET_TOOL_NAME = "submit_ticket";
 const SUBMIT_TICKET_ENDPOINT = "/interview/api/tools/submit_ticket";
 const ESCALATION_SUCCESS_TOAST_DURATION_MS = 10000;
 
-const purgeChatKitStorage = () => {
-  if (typeof window === "undefined") return;
-  const storages = [
-    window.localStorage ?? null,
-    window.sessionStorage ?? null,
-  ].filter(Boolean);
-  storages.forEach((storage) => {
-    try {
-      const keysToRemove = [];
-      for (let i = 0; i < storage.length; i += 1) {
-        const key = storage.key(i);
-        if (!key) continue;
-        const lowerKey = key.toLowerCase();
-        if (STORAGE_PURGE_PATTERNS.some((pattern) => lowerKey.includes(pattern))) {
-          keysToRemove.push(key);
-        }
-      }
-      keysToRemove.forEach((key) => storage.removeItem(key));
-      if (keysToRemove.length > 0) {
-        console.log("[Interview] Cleared ChatKit storage keys:", keysToRemove);
-      }
-    } catch (error) {
-      console.warn("[Interview] Failed to purge ChatKit storage", error);
+const generateUserId = () => {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `landki_${Math.random().toString(36).slice(2)}${Date.now()}`;
+};
+
+const getOrCreateUserId = () => {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return null;
+  }
+  try {
+    const existing = window.localStorage.getItem(USER_ID_STORAGE_KEY);
+    if (existing && existing.trim()) {
+      return existing;
     }
-  });
+    const newId = generateUserId();
+    window.localStorage.setItem(USER_ID_STORAGE_KEY, newId);
+    return newId;
+  } catch (error) {
+    console.warn("[Interview] Failed to access localStorage for userId", error);
+    return null;
+  }
 };
 
 const pickString = (...values) => {
@@ -417,6 +410,7 @@ const handleClientTool = async (toolCall, callbacks) => {
 };
 
 export default function App() {
+  const [userId, setUserId] = React.useState(() => getOrCreateUserId());
   const [chatInstanceId, setChatInstanceId] = React.useState(0);
   const [sessionExpired, setSessionExpired] = React.useState(false);
   const [chatErrorKind, setChatErrorKind] = React.useState(null);
@@ -424,12 +418,20 @@ export default function App() {
     React.useState(false);
   const [escalationToastTimer, setEscalationToastTimer] = React.useState(null);
   const [sessionCreatedAt, setSessionCreatedAt] = React.useState(null);
-  const hasClearedStorageRef = React.useRef(false);
   const sessionTimerRef = React.useRef(null);
-  if (!hasClearedStorageRef.current) {
-    purgeChatKitStorage();
-    hasClearedStorageRef.current = true;
-  }
+  React.useEffect(() => {
+    if (userId) return;
+    const id = getOrCreateUserId();
+    if (id) {
+      setUserId(id);
+    }
+  }, [userId]);
+
+  React.useEffect(() => {
+    if (userId) {
+      console.log("[Interview] ChatKit userId:", userId);
+    }
+  }, [userId]);
   const clearSessionTimer = React.useCallback(() => {
     if (typeof window === "undefined") {
       sessionTimerRef.current = null;
@@ -453,6 +455,10 @@ export default function App() {
       sessionTimerRef.current = null;
     }, SESSION_EXPIRY_MS);
   }, [clearSessionTimer]);
+  const chatKitOptions = React.useMemo(
+    () => createChatKitOptions(userId),
+    [userId]
+  );
   const chatkit = useHostedChatKit(chatKitOptions, chatInstanceId);
   const {
     status,
@@ -470,7 +476,6 @@ export default function App() {
 
   const handleRestartChat = React.useCallback(() => {
     clearSessionTimer();
-    purgeChatKitStorage();
     setSessionExpired(false);
     setChatErrorKind(null);
     setSessionCreatedAt(null);
@@ -634,7 +639,9 @@ export default function App() {
             {showSessionExpiredBanner && (
               <div className="chat-error-overlay">
                 <h3>{SESSION_EXPIRED_TITLE}</h3>
-                <p>{SESSION_EXPIRED_TEXT}</p>
+                {SESSION_EXPIRED_TEXT.map((line, index) => (
+                  <p key={`session-expired-line-${index}`}>{line}</p>
+                ))}
                 <button type="button" onClick={handleRestartChat}>
                   {SESSION_RESTART_BUTTON}
                 </button>

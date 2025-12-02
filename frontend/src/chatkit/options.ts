@@ -11,14 +11,22 @@ const apiBase =
   import.meta.env.VITE_CHATKIT_API_URL ?? "/interview/api/chatkit";
 const sessionEndpoint = `${apiBase}/session`;
 
-async function fetchClientSecret(currentClientSecret: string | null) {
+async function fetchClientSecret(
+  userId: string | null,
+  currentClientSecret: string | null
+) {
+  const body: Record<string, unknown> = {
+    current_client_secret: currentClientSecret,
+  };
+  if (userId) {
+    body.userId = userId;
+  }
+
   const response = await fetch(sessionEndpoint, {
     method: "POST",
     cache: "no-store",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      current_client_secret: currentClientSecret,
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!response.ok) {
@@ -42,14 +50,20 @@ async function fetchClientSecret(currentClientSecret: string | null) {
     throw new Error("Invalid response from ChatKit session endpoint");
   }
   const clientSecret = payload.client_secret as string;
-  console.log("[ChatKit] NEW SESSION SECRET:", clientSecret);
+  console.log(
+    "[ChatKit] NEW SESSION SECRET:",
+    clientSecret,
+    userId ? `(userId: ${userId})` : ""
+  );
   return clientSecret;
 }
 
-export const chatKitOptions: ChatKitOptions = {
+export const createChatKitOptions = (
+  userId?: string | null
+): ChatKitOptions => ({
   api: {
     async getClientSecret(currentClientSecret) {
-      return fetchClientSecret(currentClientSecret ?? null);
+      return fetchClientSecret(userId ?? null, currentClientSecret ?? null);
     },
   },
 
@@ -169,4 +183,4 @@ export const chatKitOptions: ChatKitOptions = {
       },
     ],
   },
-};
+});
