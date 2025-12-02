@@ -9,6 +9,14 @@ import {
 } from "./chatkit/escalationPayload";
 import { ESCALATION_SUCCESS_EVENT } from "./chatkit/events";
 
+const STORAGE_PURGE_PATTERNS = [
+  "chatkit",
+  "openai",
+  "client_secret",
+  "conversation",
+  "thread",
+];
+
 const SUCCESS_ASSISTANT_MESSAGE =
   "Ihre Nachricht wurde an Alaa gesendet.\n" +
   "Vielen\u00a0Dank! 😊\n" +
@@ -18,10 +26,12 @@ const ERROR_ASSISTANT_MESSAGE =
   "❌ Die Nachricht konnte leider nicht gesendet werden.\n" +
   "Bitte versuchen Sie es später erneut.";
 
-const SESSION_INACTIVE_MESSAGE =
-  "Ihre Sitzung war zu lange inaktiv und wurde beendet.";
-const SESSION_RESTART_PROMPT = "Bitte starten Sie den Chat neu.";
-const SESSION_RESTART_BUTTON = "Chat neu starten";
+const SESSION_EXPIRED_TITLE = "Die Sitzung ist abgelaufen";
+const SESSION_EXPIRED_TEXT =
+  "Aus Sicherheitsgründen endet eine Unterhaltung nach ca. 10 Minuten. " +
+  "Ihre bisherigen Nachrichten bleiben sichtbar. Bitte starten Sie eine neue Sitzung.";
+const SESSION_RESTART_BUTTON = "Neuen Chat starten";
+const SESSION_EXPIRY_MS = 570 * 1000;
 const TECHNICAL_ERROR_TEXT = {
   rate_limit:
     "Aktuell gibt es ein Nutzungs-Limit oder eine kurzzeitige Begrenzung. Ihre bisherigen Nachrichten bleiben erhalten – bitte versuchen Sie es in kurzer Zeit erneut.",
@@ -61,6 +71,33 @@ const NETWORK_ERROR_MARKERS = [
 const SUBMIT_TICKET_TOOL_NAME = "submit_ticket";
 const SUBMIT_TICKET_ENDPOINT = "/interview/api/tools/submit_ticket";
 const ESCALATION_SUCCESS_TOAST_DURATION_MS = 10000;
+
+const purgeChatKitStorage = () => {
+  if (typeof window === "undefined") return;
+  const storages = [
+    window.localStorage ?? null,
+    window.sessionStorage ?? null,
+  ].filter(Boolean);
+  storages.forEach((storage) => {
+    try {
+      const keysToRemove = [];
+      for (let i = 0; i < storage.length; i += 1) {
+        const key = storage.key(i);
+        if (!key) continue;
+        const lowerKey = key.toLowerCase();
+        if (STORAGE_PURGE_PATTERNS.some((pattern) => lowerKey.includes(pattern))) {
+          keysToRemove.push(key);
+        }
+      }
+      keysToRemove.forEach((key) => storage.removeItem(key));
+      if (keysToRemove.length > 0) {
+        console.log("[Interview] Cleared ChatKit storage keys:", keysToRemove);
+      }
+    } catch (error) {
+      console.warn("[Interview] Failed to purge ChatKit storage", error);
+    }
+  });
+};
 
 const pickString = (...values) => {
   for (const value of values) {
@@ -381,11 +418,41 @@ const handleClientTool = async (toolCall, callbacks) => {
 
 export default function App() {
   const [chatInstanceId, setChatInstanceId] = React.useState(0);
-  const [sessionEnded, setSessionEnded] = React.useState(false);
+  const [sessionExpired, setSessionExpired] = React.useState(false);
   const [chatErrorKind, setChatErrorKind] = React.useState(null);
   const [isEscalationToastVisible, setIsEscalationToastVisible] =
     React.useState(false);
   const [escalationToastTimer, setEscalationToastTimer] = React.useState(null);
+  const [sessionCreatedAt, setSessionCreatedAt] = React.useState(null);
+  const hasClearedStorageRef = React.useRef(false);
+  const sessionTimerRef = React.useRef(null);
+  if (!hasClearedStorageRef.current) {
+    purgeChatKitStorage();
+    hasClearedStorageRef.current = true;
+  }
+  const clearSessionTimer = React.useCallback(() => {
+    if (typeof window === "undefined") {
+      sessionTimerRef.current = null;
+      return;
+    }
+    if (sessionTimerRef.current) {
+      window.clearTimeout(sessionTimerRef.current);
+      sessionTimerRef.current = null;
+    }
+  }, []);
+
+  const startSessionTimer = React.useCallback(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    clearSessionTimer();
+    const startedAt = Date.now();
+    setSessionCreatedAt(startedAt);
+    sessionTimerRef.current = window.setTimeout(() => {
+      setSessionExpired(true);
+      sessionTimerRef.current = null;
+    }, SESSION_EXPIRY_MS);
+  }, [clearSessionTimer]);
   const chatkit = useHostedChatKit(chatKitOptions, chatInstanceId);
   const {
     status,
@@ -395,24 +462,20 @@ export default function App() {
     onClientTool,
     lastErrorDetail,
   } = chatkit;
-  const showSessionExpiredBanner = sessionEnded;
+  const showSessionExpiredBanner = sessionExpired;
   const technicalErrorMessage =
     chatErrorKind && !SESSION_ERROR_KINDS.has(chatErrorKind)
       ? TECHNICAL_ERROR_TEXT[chatErrorKind] ?? TECHNICAL_ERROR_TEXT.unknown
       : null;
 
   const handleRestartChat = React.useCallback(() => {
-    setSessionEnded(false);
+    clearSessionTimer();
+    purgeChatKitStorage();
+    setSessionExpired(false);
     setChatErrorKind(null);
-    if (
-      typeof window !== "undefined" &&
-      typeof window.location?.reload === "function"
-    ) {
-      window.location.reload();
-      return;
-    }
+    setSessionCreatedAt(null);
     setChatInstanceId((prev) => prev + 1);
-  }, [setChatInstanceId]);
+  }, [clearSessionTimer]);
 
   const sendAssistantMessage = React.useCallback(
     async (text) => {
@@ -463,22 +526,51 @@ export default function App() {
   }, [onClientTool, handleEscalationTool]);
 
   React.useEffect(() => {
+    if (!sessionCreatedAt) {
+      return;
+    }
+    console.log(
+      "[Interview] Chat session refreshed at",
+      new Date(sessionCreatedAt).toISOString()
+    );
+  }, [sessionCreatedAt]);
+
+  React.useEffect(() => {
+    return () => {
+      clearSessionTimer();
+    };
+  }, [clearSessionTimer]);
+
+  React.useEffect(() => {
     if (!lastErrorDetail) {
       return;
     }
     const kind = classifyChatError(lastErrorDetail);
     setChatErrorKind(kind);
     if (SESSION_ERROR_KINDS.has(kind)) {
-      setSessionEnded(true);
+      setSessionExpired(true);
     }
   }, [lastErrorDetail]);
 
   React.useEffect(() => {
     if (status === "ready") {
-      setSessionEnded(false);
+      setSessionExpired(false);
       setChatErrorKind(null);
     }
   }, [status]);
+
+  React.useEffect(() => {
+    if (status !== "ready" || sessionExpired) {
+      return;
+    }
+    startSessionTimer();
+  }, [status, sessionExpired, startSessionTimer]);
+
+  React.useEffect(() => {
+    if (sessionExpired) {
+      clearSessionTimer();
+    }
+  }, [sessionExpired, clearSessionTimer]);
 
   React.useEffect(() => {
     if (typeof window === "undefined") {
@@ -528,16 +620,9 @@ export default function App() {
           </div>
         )}
 
-        {showSessionExpiredBanner && (
-          <div className="app-error">
-            <p>{SESSION_INACTIVE_MESSAGE}</p>
-            <p>{SESSION_RESTART_PROMPT}</p>
-          </div>
-        )}
-
         <div className="chat-shell">
           <div className="chat-container">
-            {technicalErrorMessage && (
+            {technicalErrorMessage && !showSessionExpiredBanner && (
               <div
                 className="chat-status-toast"
                 role="status"
@@ -548,22 +633,24 @@ export default function App() {
             )}
             {showSessionExpiredBanner && (
               <div className="chat-error-overlay">
-                <p>{SESSION_INACTIVE_MESSAGE}</p>
-                <p>{SESSION_RESTART_PROMPT}</p>
+                <h3>{SESSION_EXPIRED_TITLE}</h3>
+                <p>{SESSION_EXPIRED_TEXT}</p>
                 <button type="button" onClick={handleRestartChat}>
                   {SESSION_RESTART_BUTTON}
                 </button>
               </div>
             )}
-            <ChatKit
-              key={chatInstanceId}
-              ref={elementRef}
-              control={control}
-              className="chatkit-element"
-              data-theme="dark"
-              style={{ height: "100%", width: "100%" }}
-              data-color-scheme="dark"
-            />
+            {!showSessionExpiredBanner && (
+              <ChatKit
+                key={chatInstanceId}
+                ref={elementRef}
+                control={control}
+                className="chatkit-element"
+                data-theme="dark"
+                style={{ height: "100%", width: "100%" }}
+                data-color-scheme="dark"
+              />
+            )}
           </div>
         </div>
       </main>

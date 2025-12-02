@@ -14,6 +14,7 @@ const sessionEndpoint = `${apiBase}/session`;
 async function fetchClientSecret(currentClientSecret: string | null) {
   const response = await fetch(sessionEndpoint, {
     method: "POST",
+    cache: "no-store",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       current_client_secret: currentClientSecret,
@@ -40,7 +41,9 @@ async function fetchClientSecret(currentClientSecret: string | null) {
     );
     throw new Error("Invalid response from ChatKit session endpoint");
   }
-  return payload.client_secret as string;
+  const clientSecret = payload.client_secret as string;
+  console.log("[ChatKit] NEW SESSION SECRET:", clientSecret);
+  return clientSecret;
 }
 
 export const chatKitOptions: ChatKitOptions = {

@@ -591,7 +591,8 @@ async def chatkit_session(request: Request):
         import uuid
         user_id = str(uuid.uuid4())
         
-        ttl_seconds = max(300, CHATKIT_SESSION_TTL_SECONDS)
+        # ChatKit Sessions API currently rejects TTLs > 600s, clamp to avoid API 400s
+        ttl_seconds = min(max(300, CHATKIT_SESSION_TTL_SECONDS), 600)
         payload = {
             "workflow": {"id": workflow_id},  # Use latest/default version
             "user": user_id,
