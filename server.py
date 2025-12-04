@@ -116,6 +116,7 @@ class EscalationCreate(BaseModel):
     version: int = Field(default=1)
     name: Optional[str] = None
     email: Optional[str] = None
+    phone: Optional[str] = None
     allow_contact: bool = False
     conversation_id: Optional[str] = None
 
@@ -172,13 +173,20 @@ def sanitize_text(value: Optional[str]) -> Optional[str]:
 
 def persist_escalation_ticket(db: Session, payload: EscalationCreate) -> EscalationTicket:
     """Store an escalation ticket and return the refreshed ORM entity."""
+    sanitized_name = sanitize_text(payload.name)
+    sanitized_email = sanitize_text(payload.email)
+    sanitized_phone = sanitize_text(getattr(payload, "phone", None))
+    contact_string = build_contact_string(sanitized_name, sanitized_email, sanitized_phone)
+    base_message = sanitize_text(payload.message) or payload.message
+    message_with_contact = prefix_message_with_contact(base_message, contact_string)
+
     ticket = EscalationTicket(
         title=sanitize_text(payload.title) or payload.title,
         category=sanitize_text(payload.category) or payload.category,
-        message=sanitize_text(payload.message) or payload.message,
+        message=message_with_contact,
         language=sanitize_text(payload.language) or payload.language,
-        name=sanitize_text(payload.name),
-        email=sanitize_text(payload.email),
+        name=sanitized_name,
+        email=contact_string or sanitized_email,
         allow_contact=bool(payload.allow_contact),
         conversation_id=sanitize_text(payload.conversation_id),
         source=sanitize_text(payload.source) or "interview_assistant",
@@ -199,6 +207,7 @@ def persist_escalation_ticket(db: Session, payload: EscalationCreate) -> Escalat
 class SubmitTicketArguments(BaseModel):
     name: Optional[str] = None
     contact: Optional[str] = None
+    phone: Optional[str] = None
     wants_reply: bool = False
     category: str
     message: str
@@ -237,9 +246,34 @@ def build_submit_ticket_title(category: str, person_name: Optional[str]) -> str:
     return title[:255]
 
 
-def coerce_contact_value(value: Optional[str]) -> str:
+def coerce_contact_value(value: Optional[str]) -> Optional[str]:
     sanitized = sanitize_text(value)
-    return sanitized or "-"
+    return sanitized or None
+
+
+def build_contact_string(
+    name: Optional[str], email: Optional[str], phone: Optional[str]
+) -> Optional[str]:
+    parts: List[str] = []
+    if name:
+        parts.append(name)
+    if email:
+        parts.append(email)
+    if phone:
+        parts.append(f"Telefon: {phone}")
+    return " – ".join(parts) if parts else None
+
+
+def prefix_message_with_contact(message: str, contact_string: Optional[str]) -> str:
+    if not contact_string:
+        return message
+    contact_prefix = f"Kontakt: {contact_string}"
+    stripped_message = message.lstrip()
+    if stripped_message.startswith(contact_prefix):
+        return message
+    if not message:
+        return contact_prefix
+    return f"{contact_prefix}\n{message}"
 
 
 def extract_submit_ticket_arguments(body: Any) -> Dict[str, Any]:
@@ -421,6 +455,10 @@ async def submit_ticket_tool(request: Request, db: Session = Depends(get_db)):
         logger.info("submit_ticket response body: %s", response_payload)
         return response_payload
 
+    normalized_name = sanitize_text(parsed_arguments.name)
+    normalized_email = coerce_contact_value(parsed_arguments.contact)
+    normalized_phone = sanitize_text(parsed_arguments.phone)
+
     ticket_payload = EscalationCreate(
         title=build_submit_ticket_title(category, parsed_arguments.name),
         category=category,
@@ -428,8 +466,9 @@ async def submit_ticket_tool(request: Request, db: Session = Depends(get_db)):
         language="de",
         source=sanitize_text(parsed_arguments.source) or "interview_assistant",
         version=1,
-        name=sanitize_text(parsed_arguments.name) or "Anonym",
-        email=coerce_contact_value(parsed_arguments.contact),
+        name=normalized_name,
+        email=normalized_email,
+        phone=normalized_phone,
         allow_contact=bool(parsed_arguments.wants_reply),
         conversation_id=sanitize_text(parsed_arguments.conversation_id),
     )
