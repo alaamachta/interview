@@ -154,32 +154,32 @@ export const createChatKitOptions = (
   },
 
   composer: {
-    placeholder: "Ihre Frage an Alaa…",
+    placeholder: "Ask Alaa anything about the Interview Assistant…",
     attachments: {
       enabled: false,
     },
   },
 
   startScreen: {
-    greeting: "👋 Willkommen beim Interview Assistent von Alaa Mashta!",
+    greeting: "👋 Welcome to the LandKI Interview Assistant",
     prompts: [
       {
         icon: "circle-question",
-        label: "Warum bin ich geeignet für eine KI-Position?",
+        label: "How does this assistant work behind the scenes?",
         prompt:
-          "Wie begründe ich überzeugend, warum ich gut für eine Rolle im Bereich KI und Automatisierung geeignet bin?",
+          "You are answering for an English-speaking recruiter. Please answer ONLY in English, even if the underlying knowledge base text is in German. Question: How does this interview assistant work behind the scenes? Translate any German content you use into clear English.",
       },
       {
-        icon: "user",
-        label: "Welche Erfahrungen bringe ich mit?",
+        icon: "circle-question",
+        label: "Wie funktioniert dieser Assistent im Hintergrund?",
         prompt:
-          "Welche Erfahrungen habe ich in der Entwicklung und Integration von KI-Systemen gesammelt?",
+          "Du antwortest für eine deutschsprachige Person. Antworte AUSSCHLIESSLICH auf Deutsch, auch wenn deine Knowledge Base in einer anderen Sprache vorliegt. Frage: Wie funktioniert dieser Interview Assistent im Hintergrund? Übersetze andere Sprachen sinngemäß ins Deutsche.",
       },
       {
-        icon: "lightbulb",
-        label: "Was sind meine Stärken in KI-Rollen?",
+        icon: "circle-question",
+        label: "كيف يعمل هذا المساعد في الخلفية؟",
         prompt:
-          "Welche meiner Fähigkeiten passen besonders gut zu KI-Integration und Automatisierung?",
+          "أنت تجيب لشخص يتحدث العربية. أجب باللغة العربية فقط وبأسلوب واضح ومهني، حتى لو كانت قاعدة المعرفة بالألمانية أو الإنجليزية. السؤال: كيف يعمل مساعد المقابلات هذا في الخلفية؟ إذا كانت المعرفة متاحة بلغة أخرى فاشرحها باللغة العربية.",
       },
     ],
   },

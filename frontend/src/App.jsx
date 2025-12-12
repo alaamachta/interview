@@ -8,37 +8,10 @@ import {
   postEscalation,
 } from "./chatkit/escalationPayload";
 import { ESCALATION_SUCCESS_EVENT } from "./chatkit/events";
+import { useLanguage } from "./i18n/LanguageProvider";
 
-const SUCCESS_ASSISTANT_MESSAGE =
-  "Ihre Nachricht wurde an Alaa gesendet.\n" +
-  "Vielen\u00a0Dank! 😊\n" +
-  "Wenn Sie weitere Fragen haben, können Sie sie einfach hier im Chat stellen.";
-
-const ERROR_ASSISTANT_MESSAGE =
-  "❌ Die Nachricht konnte leider nicht gesendet werden.\n" +
-  "Bitte versuchen Sie es später erneut.";
-
-const SESSION_EXPIRED_TITLE = "Die Sitzung ist abgelaufen";
-const SESSION_EXPIRED_TEXT = [
-  "Aus Sicherheitsgründen endet eine Unterhaltung nach ca. 10 Minuten.",
-  "Ihre bisherigen Chats werden im Chatverlauf gespeichert und sind nur auf Ihrem Gerät sichtbar.",
-  "Sie können dort frühere Gespräche öffnen oder mit einem neuen Chat fortfahren.",
-];
-const SESSION_RESTART_BUTTON = "Neuen Chat starten";
 const SESSION_EXPIRY_MS = 570 * 1000;
 const USER_ID_STORAGE_KEY = "landki_user_id";
-const TECHNICAL_ERROR_TEXT = {
-  rate_limit:
-    "Aktuell gibt es ein Nutzungs-Limit oder eine kurzzeitige Begrenzung. Ihre bisherigen Nachrichten bleiben erhalten – bitte versuchen Sie es in kurzer Zeit erneut.",
-  quota:
-    "Aktuell gibt es ein Nutzungs-Limit oder eine kurzzeitige Begrenzung. Ihre bisherigen Nachrichten bleiben erhalten – bitte versuchen Sie es in kurzer Zeit erneut.",
-  network:
-    "Es ist ein technischer Fehler aufgetreten. Ihre bisherigen Nachrichten bleiben erhalten – bitte laden Sie die Seite neu oder versuchen Sie es später erneut.",
-  server:
-    "Es ist ein technischer Fehler aufgetreten. Ihre bisherigen Nachrichten bleiben erhalten – bitte laden Sie die Seite neu oder versuchen Sie es später erneut.",
-  unknown:
-    "Es ist ein technischer Fehler aufgetreten. Ihre bisherigen Nachrichten bleiben erhalten – bitte laden Sie die Seite neu oder versuchen Sie es später erneut.",
-};
 const SESSION_ERROR_KINDS = new Set([
   "session_expired",
   "invalid_ephemeral_key",
@@ -329,7 +302,7 @@ function useHostedChatKit(baseOptions, resetNonce = 0) {
   };
 }
 
-const handleClientTool = async (toolCall, callbacks) => {
+const handleClientTool = async (toolCall, callbacks, currentLanguage = "en") => {
   const { onSuccess, onError } = callbacks ?? {};
   const params = toolCall?.params ?? {};
   const actionSource = params.action ?? toolCall?.action ?? {};
@@ -366,7 +339,7 @@ const handleClientTool = async (toolCall, callbacks) => {
 
   const payload = buildEscalationPayload(payloadSource, {
     source: "interview_assistant",
-    language: "de",
+    language: currentLanguage ?? "en",
   });
   if (!payload) {
     console.warn(
@@ -419,6 +392,16 @@ export default function App() {
   const [escalationToastTimer, setEscalationToastTimer] = React.useState(null);
   const [sessionCreatedAt, setSessionCreatedAt] = React.useState(null);
   const sessionTimerRef = React.useRef(null);
+  const { dictionary, language } = useLanguage();
+  const interviewCopy = dictionary.interview;
+  const successAssistantMessage = React.useMemo(
+    () => interviewCopy.escalation.successLines.join("\n"),
+    [language]
+  );
+  const errorAssistantMessage = React.useMemo(
+    () => interviewCopy.escalation.errorLines.join("\n"),
+    [language]
+  );
   React.useEffect(() => {
     if (userId) return;
     const id = getOrCreateUserId();
@@ -471,7 +454,8 @@ export default function App() {
   const showSessionExpiredBanner = sessionExpired;
   const technicalErrorMessage =
     chatErrorKind && !SESSION_ERROR_KINDS.has(chatErrorKind)
-      ? TECHNICAL_ERROR_TEXT[chatErrorKind] ?? TECHNICAL_ERROR_TEXT.unknown
+      ? interviewCopy.technicalErrors[chatErrorKind] ??
+        interviewCopy.technicalErrors.unknown
       : null;
 
   const handleRestartChat = React.useCallback(() => {
@@ -519,11 +503,15 @@ export default function App() {
 
   const handleEscalationTool = React.useCallback(
     (toolCall) =>
-      handleClientTool(toolCall, {
-        onSuccess: () => sendAssistantMessage(SUCCESS_ASSISTANT_MESSAGE),
-        onError: () => sendAssistantMessage(ERROR_ASSISTANT_MESSAGE),
-      }),
-    [sendAssistantMessage]
+      handleClientTool(
+        toolCall,
+        {
+          onSuccess: () => sendAssistantMessage(successAssistantMessage),
+          onError: () => sendAssistantMessage(errorAssistantMessage),
+        },
+        language
+      ),
+    [sendAssistantMessage, successAssistantMessage, errorAssistantMessage, language]
   );
 
   React.useEffect(() => {
@@ -613,18 +601,16 @@ export default function App() {
     <div className="app-root">
       {isEscalationToastVisible && (
         <div className="escalation-toast" role="status" aria-live="polite">
-          {SUCCESS_ASSISTANT_MESSAGE.split("\n").map((line, index) => (
+          {interviewCopy.escalation.successLines.map((line, index) => (
             <p key={`escalation-toast-line-${index}`}>{line}</p>
           ))}
         </div>
       )}
       <main className="app-main">
-        <h1 className="sr-only">
-          AI Interview Assistant Demo – LandKI by Alaa Mashta
-        </h1>
+        <h1 className="sr-only">{interviewCopy.srTitle}</h1>
         {status !== "ready" && !error && (
           <div className="app-loading">
-            <p>Lädt Chat-Assistent…</p>
+            <p>{interviewCopy.loading}</p>
           </div>
         )}
 
@@ -641,12 +627,12 @@ export default function App() {
             )}
             {showSessionExpiredBanner && (
               <div className="chat-error-overlay">
-                <h3>{SESSION_EXPIRED_TITLE}</h3>
-                {SESSION_EXPIRED_TEXT.map((line, index) => (
+                <h3>{interviewCopy.sessionExpired.title}</h3>
+                {interviewCopy.sessionExpired.paragraphs.map((line, index) => (
                   <p key={`session-expired-line-${index}`}>{line}</p>
                 ))}
                 <button type="button" onClick={handleRestartChat}>
-                  {SESSION_RESTART_BUTTON}
+                  {interviewCopy.sessionExpired.restartButton}
                 </button>
               </div>
             )}
